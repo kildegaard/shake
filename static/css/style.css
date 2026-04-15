@@ -554,6 +554,36 @@
     line-height: 1.45;
 }
 
+/* Prompt Analysis — score strip */
+.prompt-score-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 10px;
+}
+.prompt-score-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 0.78rem;
+}
+.prompt-score-pill-label {
+    color: #374151;
+    font-weight: 500;
+}
+.prompt-score-pill-value {
+    font-weight: 700;
+    font-size: 0.85rem;
+}
+
 /* Loading overlay */
 .loading-overlay {
     position: fixed;

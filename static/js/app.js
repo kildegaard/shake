@@ -249,47 +249,115 @@ function renderPromptAnalysis(data) {
     const container = document.getElementById('prompt-analysis-results');
 
     const overallScore = data.overall_score || 0;
-    const scoreClass = `score-${Math.round(overallScore)}`;
+    const scoreColor = overallScore >= 4.5 ? '#16a34a' : overallScore >= 3 ? '#ca8a04' : '#dc2626';
+    const dims = data.dimensions || [];
 
+    // ── PDF button + overall score header ──────────────────────────────────
     let html = `
-        <div class="summary-bar">
-            <div class="summary-stat">
-                <div class="score-badge ${scoreClass}">${overallScore.toFixed(1)}</div>
-                <span class="label">Overall</span>
-            </div>
-            <div class="flex-1 text-sm text-gray-700">${data.overall_feedback || ''}</div>
-        </div>
-    `;
-
-    if (data.dimensions && data.dimensions.length > 0) {
-        html += '<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">';
-        for (const dim of data.dimensions) {
-            const sc = `score-${Math.round(dim.score)}`;
-            html += `
-                <div class="result-card">
-                    <div class="result-card-header">
-                        <span class="font-medium text-gray-800">${dim.name}</span>
-                        <span class="score-badge ${sc}">${dim.score}</span>
-                    </div>
-                    <p class="text-sm text-gray-600">${dim.feedback}</p>
+        <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-4">
+                <div style="width:52px;height:52px;border-radius:50%;background:${scoreColor};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                    <span style="color:#fff;font-size:1.25rem;font-weight:700;">${overallScore.toFixed(1)}</span>
                 </div>
-            `;
+                <p class="text-sm text-gray-600 max-w-xl">${data.overall_feedback || ''}</p>
+            </div>
+            <button onclick="downloadPromptPDF()" id="btn-prompt-pdf" class="btn-download-pdf" style="flex-shrink:0;">⬇ PDF</button>
+        </div>`;
+
+    // ── Score summary strip ────────────────────────────────────────────────
+    if (dims.length > 0) {
+        html += '<div class="prompt-score-strip">';
+        for (const dim of dims) {
+            const color = dim.score >= 4.5 ? '#16a34a' : dim.score >= 3 ? '#ca8a04' : '#dc2626';
+            const shortName = dim.name.replace('Crisis Scenario ', '').replace(' Quality', '').replace('Organizational ', 'Org. ');
+            html += `
+                <div class="prompt-score-pill">
+                    <span class="prompt-score-pill-label">${shortName}</span>
+                    <span class="prompt-score-pill-value" style="color:${color};">${dim.score}</span>
+                </div>`;
         }
         html += '</div>';
     }
 
+    // ── Critical issues ────────────────────────────────────────────────────
     if (data.critical_issues && data.critical_issues.length > 0) {
         html += `
-            <div class="bg-red-50 border border-red-200 rounded-lg p-4">
-                <h4 class="text-sm font-semibold text-red-800 mb-2">Critical Issues</h4>
-                <ul class="list-disc list-inside text-sm text-red-700 space-y-1">
-                    ${data.critical_issues.map(i => `<li>${i}</li>`).join('')}
+            <div class="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                <h4 class="text-xs font-semibold text-red-800 mb-1.5 uppercase tracking-wide">Must Fix Before Submission</h4>
+                <ul class="space-y-1">
+                    ${data.critical_issues.map(i => `<li class="flex gap-2 text-sm text-red-700"><span class="mt-0.5 flex-shrink-0">✗</span>${i}</li>`).join('')}
                 </ul>
-            </div>
-        `;
+            </div>`;
+    }
+
+    // ── Per-dimension cards ────────────────────────────────────────────────
+    if (dims.length > 0) {
+        html += '<div class="grid grid-cols-1 md:grid-cols-2 gap-3">';
+        for (const dim of dims) {
+            const color = dim.score >= 4.5 ? '#16a34a' : dim.score >= 3 ? '#ca8a04' : '#dc2626';
+            const fixes = dim.fixes || [];
+            html += `
+                <div class="result-card">
+                    <div class="result-card-header">
+                        <span class="font-medium text-gray-800 text-sm">${dim.name}</span>
+                        <span style="background:${color};color:#fff;font-weight:700;font-size:0.8rem;padding:2px 8px;border-radius:999px;">${dim.score}/5</span>
+                    </div>
+                    ${dim.feedback ? `<p class="text-xs text-gray-500 mb-2 leading-relaxed">${dim.feedback}</p>` : ''}
+                    ${fixes.length > 0 ? `
+                    <ul class="space-y-1">
+                        ${fixes.map(f => `
+                            <li class="flex gap-2 text-xs text-gray-700 leading-snug">
+                                <span class="flex-shrink-0 font-bold text-brand-600 mt-px">→</span>
+                                <span>${f}</span>
+                            </li>`).join('')}
+                    </ul>` : ''}
+                </div>`;
+        }
+        html += '</div>';
     }
 
     container.innerHTML = html;
+    container._promptData = data;
+}
+
+async function downloadPromptPDF() {
+    const container = document.getElementById('prompt-analysis-results');
+    const data = container._promptData;
+    if (!data) {
+        showToast('No prompt analysis to export.', 'warn');
+        return;
+    }
+
+    const btn = document.getElementById('btn-prompt-pdf');
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+
+    try {
+        const res = await fetch('/api/prompt/pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ analysis: data })
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+        }
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'prompt_analysis.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('PDF downloaded!', 'success');
+    } catch (e) {
+        showToast('PDF download failed: ' + e.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '⬇ PDF'; }
+    }
 }
 
 // ─── Rubric Analysis ───

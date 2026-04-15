@@ -236,6 +236,212 @@ def _build_header(model_name: str, styles: dict) -> Table:
     return tbl
 
 
+def generate_prompt_pdf(analysis: dict) -> bytes:
+    """Generate a branded PDF report from a Prompt Quality Analysis result."""
+    buffer = BytesIO()
+    styles = _styles()
+
+    overall_score = analysis.get("overall_score", 0)
+    dims = analysis.get("dimensions", [])
+    overall_feedback = analysis.get("overall_feedback", "")
+    critical_issues = analysis.get("critical_issues", [])
+
+    score_color = (
+        colors.HexColor("#16a34a") if overall_score >= 4.5
+        else colors.HexColor("#ca8a04") if overall_score >= 3
+        else colors.HexColor("#dc2626")
+    )
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=20 * mm,
+        leftMargin=20 * mm,
+        topMargin=22 * mm,
+        bottomMargin=20 * mm,
+        title="Prompt Quality Analysis — Shake Analyzer",
+        author="Shake Analyzer",
+    )
+
+    elements: list = []
+    page_width = A4[0] - 40 * mm
+
+    # ── Header ──────────────────────────────────────────────────────────────
+    date_str = datetime.now().strftime("%B %d, %Y  %H:%M")
+    logo = Paragraph(
+        '<font color="#4263eb" size="22"><b>S</b></font>',
+        ParagraphStyle("logo", fontSize=22, leading=24),
+    )
+    title_para = Paragraph(
+        '<font name="Helvetica-Bold" size="14" color="#111827">Shake Analyzer</font>'
+        '<br/><font size="10" color="#374151">Prompt Quality Analysis</font>',
+        ParagraphStyle("title", fontSize=14, leading=18),
+    )
+    date_para = Paragraph(
+        f'<font size="9" color="#6b7280">{date_str}</font>',
+        ParagraphStyle("date", fontSize=9, leading=13, alignment=TA_LEFT),
+    )
+    header_tbl = Table(
+        [[logo, title_para, date_para]],
+        colWidths=[12 * mm, page_width - 55 * mm, 43 * mm],
+    )
+    header_tbl.setStyle(TableStyle([
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("LINEBELOW",     (0, 0), (-1, 0), 1.5, BRAND),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
+        ("LEFTPADDING",   (0, 0), (0, 0), 0),
+        ("RIGHTPADDING",  (-1, 0), (-1, 0), 0),
+    ]))
+    elements.append(header_tbl)
+    elements.append(Spacer(1, 6 * mm))
+
+    # ── Overall score + summary ──────────────────────────────────────────────
+    overall_label = ParagraphStyle("overall_label", fontName="Helvetica-Bold",
+                                    fontSize=10, leading=13, textColor=colors.white)
+    overall_score_para = Paragraph(
+        f'<font name="Helvetica-Bold" size="18">{overall_score:.1f}</font>'
+        f'<br/><font size="8">/ 5.0</font>',
+        ParagraphStyle("score_num", fontSize=18, leading=22, alignment=1,
+                       textColor=colors.white),
+    )
+    feedback_para = Paragraph(
+        f'<font name="Helvetica-Bold" size="11" color="#111827">Overall Score</font>'
+        f'<br/><font size="9.5" color="#374151">{_escape_xml(overall_feedback)}</font>',
+        ParagraphStyle("fb", fontSize=9.5, leading=14),
+    )
+    score_tbl = Table(
+        [[overall_score_para, feedback_para]],
+        colWidths=[22 * mm, page_width - 22 * mm],
+    )
+    score_tbl.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (0, 0), score_color),
+        ("BACKGROUND",    (1, 0), (1, 0), colors.HexColor("#f0f4ff")),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+        ("TOPPADDING",    (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("BOX",           (0, 0), (-1, -1), 0.5, GRAY_200),
+    ]))
+    elements.append(score_tbl)
+    elements.append(Spacer(1, 5 * mm))
+
+    # ── Score summary strip ──────────────────────────────────────────────────
+    if dims:
+        strip_style = ParagraphStyle("strip", fontName="Helvetica", fontSize=8,
+                                      leading=11, textColor=GRAY_700, alignment=1)
+        strip_bold = ParagraphStyle("strip_bold", fontName="Helvetica-Bold", fontSize=10,
+                                     leading=13, alignment=1)
+        n = len(dims)
+        col_w = page_width / n
+        cells = []
+        for dim in dims:
+            d_hex = (
+                "#16a34a" if dim["score"] >= 4.5
+                else "#ca8a04" if dim["score"] >= 3
+                else "#dc2626"
+            )
+            short = (dim["name"]
+                     .replace("Crisis Scenario ", "")
+                     .replace(" Quality", "")
+                     .replace("Organizational ", "Org. "))
+            cell = [
+                Paragraph(f'<font color="{d_hex}" name="Helvetica-Bold">{dim["score"]}</font>',
+                          strip_bold),
+                Paragraph(_escape_xml(short), strip_style),
+            ]
+            cells.append(cell)
+        strip_tbl = Table([cells], colWidths=[col_w] * n)
+        strip_tbl.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), colors.HexColor("#f8f9fa")),
+            ("BOX",           (0, 0), (-1, -1), 0.5, GRAY_200),
+            ("INNERGRID",     (0, 0), (-1, -1), 0.3, GRAY_200),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+            ("TOPPADDING",    (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(strip_tbl)
+        elements.append(Spacer(1, 5 * mm))
+
+    # ── Critical issues ──────────────────────────────────────────────────────
+    if critical_issues:
+        elements.append(Paragraph("Must Fix Before Submission", styles["h3"]))
+        for issue in critical_issues:
+            elements.append(
+                Paragraph(f'<font color="#991b1b">✗</font>  {_escape_xml(issue)}',
+                          styles["list_item"])
+            )
+        elements.append(Spacer(1, 4 * mm))
+
+    # ── Per-dimension detail ─────────────────────────────────────────────────
+    elements.append(Paragraph("Dimension Breakdown", styles["h2"]))
+    elements.append(Spacer(1, 3 * mm))
+
+    dim_label_style = ParagraphStyle("dim_label", fontName="Helvetica-Bold",
+                                      fontSize=9.5, leading=13, textColor=GRAY_800)
+    dim_score_style = ParagraphStyle("dim_score", fontName="Helvetica-Bold",
+                                      fontSize=12, leading=15, alignment=1,
+                                      textColor=colors.white)
+    feedback_small = ParagraphStyle("fb_small", fontName="Helvetica-Oblique",
+                                     fontSize=8.5, leading=12, textColor=GRAY_500,
+                                     spaceAfter=3)
+    fix_style = ParagraphStyle("fix", fontName="Helvetica", fontSize=8.5,
+                                leading=12, textColor=GRAY_700,
+                                leftIndent=10, spaceBefore=2, spaceAfter=2)
+
+    for dim in dims:
+        d_color = (
+            colors.HexColor("#16a34a") if dim["score"] >= 4.5
+            else colors.HexColor("#ca8a04") if dim["score"] >= 3
+            else colors.HexColor("#dc2626")
+        )
+        fixes = dim.get("fixes", [])
+        fix_items = [Paragraph(f'→  {_escape_xml(f)}', fix_style) for f in fixes]
+
+        right_col = [Paragraph(_escape_xml(dim["name"]), dim_label_style)]
+        if dim.get("feedback"):
+            right_col.append(Paragraph(_escape_xml(dim["feedback"]), feedback_small))
+        right_col.extend(fix_items)
+
+        score_cell = Paragraph(
+            f'<font name="Helvetica-Bold" size="14">{dim["score"]}</font><br/>'
+            f'<font size="7">/5</font>',
+            ParagraphStyle("sc_cell", fontName="Helvetica-Bold", fontSize=14,
+                           leading=17, alignment=1, textColor=colors.white),
+        )
+
+        row_tbl = Table(
+            [[score_cell, right_col]],
+            colWidths=[16 * mm, page_width - 16 * mm],
+        )
+        row_tbl.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (0, 0), d_color),
+            ("BACKGROUND",    (1, 0), (1, 0), colors.HexColor("#fafafa")),
+            ("BOX",           (0, 0), (-1, -1), 0.5, GRAY_200),
+            ("VALIGN",        (0, 0), (0, 0), "MIDDLE"),
+            ("VALIGN",        (1, 0), (1, 0), "TOP"),
+            ("ALIGN",         (0, 0), (0, 0), "CENTER"),
+            ("LEFTPADDING",   (1, 0), (1, 0), 10),
+            ("RIGHTPADDING",  (1, 0), (1, 0), 8),
+            ("TOPPADDING",    (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(row_tbl)
+        elements.append(Spacer(1, 3 * mm))
+
+    def _footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(GRAY_500)
+        canvas.drawString(20 * mm, 12 * mm, "Shake Analyzer — Jupiter Shake")
+        canvas.drawRightString(A4[0] - 20 * mm, 12 * mm, f"Page {doc.page}")
+        canvas.restoreState()
+
+    doc.build(elements, onFirstPage=_footer, onLaterPages=_footer)
+    return buffer.getvalue()
+
+
 def generate_rhea_pdf(rhea_results: dict) -> bytes:
     """Generate a PDF report from Rhea evaluation results (one or more models)."""
     buffer = BytesIO()

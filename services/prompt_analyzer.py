@@ -2,43 +2,39 @@ import anthropic
 import os
 import json
 
-SYSTEM_PROMPT = """You are an expert evaluator for the Jupiter Shake crisis management task design project. Your job is to analyze a prompt written by an Expert and evaluate its quality against the official Expert Instructions criteria.
+SYSTEM_PROMPT = """You are a strict quality reviewer for the Jupiter Shake crisis management task. Your job is to score an Expert's prompt and tell them exactly what to fix to reach a perfect score.
 
-Evaluate the prompt across these dimensions, scoring each from 1 (poor) to 5 (excellent):
+Score each dimension 1–5. Be brief: 2 sentences max for feedback. Focus only on gaps and concrete fixes, not on what is already good.
 
-1. **Crisis Scenario Detail**: Does the prompt present a detailed, realistic crisis scenario (natural disaster, geopolitical event, workplace safety, etc.)? Is it clearly structured with enough detail for an AI agent to reason through the situation?
+Dimensions:
+1. **Crisis Scenario Detail** — Realistic, multi-hazard crisis with enough specifics (quantities, geography, timing) for an AI to reason through it.
+2. **Organizational Context Seeding** — Referenced files must contain real rosters, runbooks, building layouts, ICS structure, historical precedent. Statedassumptions in-prompt don't count.
+3. **Staged Workflow** — Explicit 3-phase triage → action planning → delivery structure that forces differentiated decisions at each phase.
+4. **Explicitness** — Crisis type, time of day, geography, shift details, and which facts live only in files must all be stated, not implied.
+5. **Required Deliverables** — Must demand: severity classification, stakeholder notification plan, action plan with resource allocation, and draft communications.
+6. **Rubric Testability** — Every rubric must be checkable TRUE/FALSE from model output + sources. No subjective or "should include" language.
+7. **Writing Quality** — No formatting artifacts, correct grammar, professional tone.
 
-2. **Organizational Context Seeding**: Does the prompt include or reference seeded organizational context such as employee rosters, office/site locations, existing policies/runbooks, and historical precedent? Critical information must live in files, not unstated assumptions.
-
-3. **Staged Workflow**: Does the prompt stage work through triage, action planning, and delivery in a logical order? Does it move the model through these stages explicitly?
-
-4. **Explicitness**: Is the prompt explicit about crisis type, time, geography, and which facts appear only in attached files?
-
-5. **Required Deliverables**: Does the prompt require the agent to produce:
-   - Severity classification and triage assessment
-   - Stakeholder identification and notification plan
-   - Action plan with resource allocation
-   - Draft communications (internal updates, leadership briefs, employee-facing messages)
-
-6. **Rubric Testability**: Can a third party mark each rubric TRUE/FALSE using the model output plus sources? Are instructions specific enough to avoid subjective interpretation?
-
-7. **Writing Quality**: Spelling, grammar, specificity, and professional tone.
-
-Return your analysis as JSON with this structure:
+Return ONLY this JSON (no markdown wrapper):
 {
   "dimensions": [
     {
       "name": "Crisis Scenario Detail",
       "score": 4,
-      "feedback": "Detailed explanation..."
+      "feedback": "One or two sentences on what is missing or weak.",
+      "fixes": ["Specific action item 1", "Specific action item 2"]
     }
   ],
   "overall_score": 4.2,
-  "overall_feedback": "Summary of strengths and areas for improvement...",
-  "critical_issues": ["List of any blocking issues that must be fixed before submission"]
+  "overall_feedback": "One sentence: the single biggest blocker keeping this prompt from a perfect score.",
+  "critical_issues": ["Any hard blockers that must be resolved before submission — keep to 1-3 items max, omit if none"]
 }
 
-Be thorough but constructive. Highlight both strengths and weaknesses."""
+Rules:
+- fixes[] must be concrete and actionable (e.g. "Add a clock time like 14:30 for shift-change context" not "Be more explicit about time").
+- If a dimension scores 5, still add at least one fix noting what would break that score.
+- Keep each feedback string under 40 words.
+- Keep each fix string under 20 words."""
 
 
 def analyze_prompt(prompt_text: str, context_files: list[dict] = None) -> dict:
@@ -49,11 +45,15 @@ def analyze_prompt(prompt_text: str, context_files: list[dict] = None) -> dict:
     if context_files:
         user_message += "\n\n## Context Files Provided\n"
         for f in context_files:
-            user_message += f"\n### File: {f['name']}\n{f['content'][:2000]}...\n" if len(f['content']) > 2000 else f"\n### File: {f['name']}\n{f['content']}\n"
+            user_message += (
+                f"\n### File: {f['name']}\n{f['content'][:2000]}...\n"
+                if len(f['content']) > 2000
+                else f"\n### File: {f['name']}\n{f['content']}\n"
+            )
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=4096,
+        max_tokens=2048,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}]
     )
