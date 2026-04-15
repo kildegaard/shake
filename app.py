@@ -13,6 +13,7 @@ from services.pdf_generator import (
     generate_response_pdf as _generate_pdf,
     generate_rhea_pdf as _generate_rhea_pdf,
     generate_prompt_pdf as _generate_prompt_pdf,
+    generate_rubric_pdf as _generate_rubric_pdf,
 )
 
 load_dotenv()
@@ -229,6 +230,26 @@ def download_pdf():
         )
     except Exception as e:
         return jsonify({"error": f"PDF generation failed: {e}"}), 500
+
+
+@app.route("/api/rubric/pdf", methods=["POST"])
+def download_rubric_pdf():
+    data = request.get_json() or {}
+    analysis = data.get("analysis", {})
+
+    if not analysis:
+        return jsonify({"error": "No analysis data provided."}), 400
+
+    try:
+        pdf_bytes = _generate_rubric_pdf(analysis)
+        from flask import Response
+        return Response(
+            pdf_bytes,
+            mimetype="application/pdf",
+            headers={"Content-Disposition": 'attachment; filename="rubric_analysis.pdf"'},
+        )
+    except Exception as e:
+        return jsonify({"error": f"Rubric PDF generation failed: {e}"}), 500
 
 
 @app.route("/api/prompt/pdf", methods=["POST"])

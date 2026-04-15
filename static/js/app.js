@@ -411,17 +411,7 @@ function renderRubricAnalysis(data) {
 
     let html = `
         <div class="flex justify-end mb-3">
-            <button
-                onclick="copyRubricMarkdown()"
-                class="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white text-xs font-medium rounded-lg shadow transition-colors"
-                title="Copy Slack-ready Markdown to clipboard"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke="currentColor" stroke-width="2" fill="none"/>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" fill="none"/>
-                </svg>
-                Copy as Markdown (Slack)
-            </button>
+            <button onclick="downloadRubricPDF()" id="btn-rubric-pdf" class="btn-download-pdf">⬇ PDF</button>
         </div>
         <div class="summary-bar">
             <div class="summary-stat">
@@ -501,57 +491,44 @@ function renderRubricAnalysis(data) {
     container._rubricData = data;
 }
 
-function buildRubricMarkdown(data) {
-    const q = (data.overall_quality || 'N/A').replace('_', ' ').toUpperCase();
-    const icon = data.overall_quality === 'good' ? ':white_check_mark:' :
-                 data.overall_quality === 'acceptable' ? ':warning:' : ':x:';
-    const s = data.stats || { pass: 0, warn: 0, fail: 0, total_rubrics: 0 };
-
-    let md = `*${icon} Rubric Analysis — Overall: ${q}*\n`;
-    md += `✅ Pass: ${s.pass}  |  ⚠️ Warn: ${s.warn}  |  ❌ Fail: ${s.fail}  |  Total: ${s.total_rubrics}\n`;
-
-    if (data.overall_feedback) {
-        md += `\n_${data.overall_feedback}_\n`;
-    }
-
-    if (data.rubric_evaluations && data.rubric_evaluations.length > 0) {
-        md += `\n*Per-Rubric Evaluation*\n`;
-        data.rubric_evaluations.forEach((rubric, idx) => {
-            const statusIcon = rubric.quality === 'pass' ? '✅' :
-                               rubric.quality === 'warn' ? '⚠️' : '❌';
-            md += `\n${idx + 1}. ${statusIcon} *[${rubric.quality.toUpperCase()}]* ${rubric.criterion}`;
-            if (rubric.issues && rubric.issues.length > 0) {
-                rubric.issues.forEach(i => {
-                    md += `\n   • *${i.dimension}*: ${i.detail}`;
-                });
-            }
-            md += '\n';
-        });
-    }
-
-    if (data.coverage_gaps && data.coverage_gaps.length > 0) {
-        md += `\n*⚠️ Coverage Gaps* — Topics in prompt with no rubric coverage:\n`;
-        data.coverage_gaps.forEach(g => {
-            md += `• *${g.prompt_topic}* — ${g.detail}\n`;
-        });
-    }
-
-    return md.trim();
-}
-
-function copyRubricMarkdown() {
+async function downloadRubricPDF() {
     const container = document.getElementById('rubric-analysis-results');
     const data = container._rubricData;
     if (!data) {
-        showToast('No rubric analysis to copy.', 'warn');
+        showToast('No rubric analysis to export.', 'warn');
         return;
     }
-    const md = buildRubricMarkdown(data);
-    navigator.clipboard.writeText(md).then(() => {
-        showToast('Markdown copied to clipboard!', 'success');
-    }).catch(() => {
-        showToast('Could not copy — try HTTPS or allow clipboard access.', 'error');
-    });
+
+    const btn = document.getElementById('btn-rubric-pdf');
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+
+    try {
+        const res = await fetch('/api/rubric/pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ analysis: data })
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+        }
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'rubric_analysis.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('PDF downloaded!', 'success');
+    } catch (e) {
+        showToast('PDF download failed: ' + e.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '⬇ PDF'; }
+    }
 }
 
 // ─── LLM Testing ───

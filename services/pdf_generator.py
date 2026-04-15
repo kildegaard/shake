@@ -236,6 +236,234 @@ def _build_header(model_name: str, styles: dict) -> Table:
     return tbl
 
 
+def generate_rubric_pdf(analysis: dict) -> bytes:
+    """Generate a branded PDF report from a Rubric Quality Analysis result."""
+    buffer = BytesIO()
+    styles = _styles()
+
+    overall_quality = analysis.get("overall_quality", "")
+    overall_feedback = analysis.get("overall_feedback", "")
+    stats = analysis.get("stats", {})
+    rubric_evals = analysis.get("rubric_evaluations", [])
+    coverage_gaps = analysis.get("coverage_gaps", [])
+
+    quality_color = (
+        colors.HexColor("#16a34a") if overall_quality == "good"
+        else colors.HexColor("#ca8a04") if overall_quality == "acceptable"
+        else colors.HexColor("#dc2626")
+    )
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=20 * mm,
+        leftMargin=20 * mm,
+        topMargin=22 * mm,
+        bottomMargin=20 * mm,
+        title="Rubric Quality Analysis — Shake Analyzer",
+        author="Shake Analyzer",
+    )
+
+    elements: list = []
+    page_width = A4[0] - 40 * mm
+
+    # ── Header ──────────────────────────────────────────────────────────────
+    date_str = datetime.now().strftime("%B %d, %Y  %H:%M")
+    logo = Paragraph(
+        '<font color="#4263eb" size="22"><b>S</b></font>',
+        ParagraphStyle("logo", fontSize=22, leading=24),
+    )
+    title_para = Paragraph(
+        '<font name="Helvetica-Bold" size="14" color="#111827">Shake Analyzer</font>'
+        '<br/><font size="10" color="#374151">Rubric Quality Analysis</font>',
+        ParagraphStyle("title", fontSize=14, leading=18),
+    )
+    date_para = Paragraph(
+        f'<font size="9" color="#6b7280">{date_str}</font>',
+        ParagraphStyle("date", fontSize=9, leading=13, alignment=TA_LEFT),
+    )
+    header_tbl = Table(
+        [[logo, title_para, date_para]],
+        colWidths=[12 * mm, page_width - 55 * mm, 43 * mm],
+    )
+    header_tbl.setStyle(TableStyle([
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("LINEBELOW",     (0, 0), (-1, 0), 1.5, BRAND),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
+        ("LEFTPADDING",   (0, 0), (0, 0), 0),
+        ("RIGHTPADDING",  (-1, 0), (-1, 0), 0),
+    ]))
+    elements.append(header_tbl)
+    elements.append(Spacer(1, 6 * mm))
+
+    # ── Summary card ────────────────────────────────────────────────────────
+    quality_label = (overall_quality or "N/A").replace("_", " ").upper()
+    quality_para = Paragraph(
+        f'<font name="Helvetica-Bold" size="16">{quality_label}</font>',
+        ParagraphStyle("ql", fontSize=16, leading=20, textColor=colors.white, alignment=1),
+    )
+    feedback_para = Paragraph(
+        f'<font name="Helvetica-Bold" size="11" color="#111827">Overall Quality</font>'
+        f'<br/><font size="9.5" color="#374151">{_escape_xml(overall_feedback)}</font>',
+        ParagraphStyle("fb", fontSize=9.5, leading=14),
+    )
+
+    stats_items = []
+    if stats:
+        for label, val, hex_col in [
+            ("Pass", stats.get("pass", 0), "#16a34a"),
+            ("Warn", stats.get("warn", 0), "#ca8a04"),
+            ("Fail", stats.get("fail", 0), "#dc2626"),
+            ("Total", stats.get("total_rubrics", 0), "#374151"),
+        ]:
+            stats_items.append(
+                Paragraph(
+                    f'<font name="Helvetica-Bold" size="13" color="{hex_col}">{val}</font>'
+                    f'<br/><font size="8" color="#6b7280">{label}</font>',
+                    ParagraphStyle(f"st_{label}", fontSize=13, leading=16, alignment=1),
+                )
+            )
+
+    if stats_items:
+        n = len(stats_items)
+        stat_w = 18 * mm
+        summary_tbl = Table(
+            [[quality_para, feedback_para] + stats_items],
+            colWidths=[26 * mm, page_width - 26 * mm - n * stat_w] + [stat_w] * n,
+        )
+    else:
+        summary_tbl = Table(
+            [[quality_para, feedback_para]],
+            colWidths=[26 * mm, page_width - 26 * mm],
+        )
+
+    summary_tbl.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (0, 0), quality_color),
+        ("BACKGROUND",    (1, 0), (-1, 0), colors.HexColor("#f0f4ff")),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN",         (2, 0), (-1, 0), "CENTER"),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+        ("TOPPADDING",    (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("BOX",           (0, 0), (-1, -1), 0.5, GRAY_200),
+        ("INNERGRID",     (0, 0), (-1, -1), 0.3, GRAY_200),
+    ]))
+    elements.append(summary_tbl)
+    elements.append(Spacer(1, 6 * mm))
+
+    # ── Per-rubric evaluation table ──────────────────────────────────────────
+    if rubric_evals:
+        elements.append(Paragraph("Per-Rubric Evaluation", styles["h2"]))
+        elements.append(Spacer(1, 3 * mm))
+
+        header_style = ParagraphStyle("hdr", fontName="Helvetica-Bold", fontSize=8.5,
+                                       leading=12, textColor=colors.white)
+        body_sm = ParagraphStyle("body_sm", fontName="Helvetica", fontSize=8.5,
+                                  leading=12, textColor=GRAY_800)
+        issue_sm = ParagraphStyle("issue_sm", fontName="Helvetica", fontSize=7.5,
+                                   leading=11, textColor=GRAY_500)
+
+        col_num = 8 * mm
+        col_status = 14 * mm
+        col_criterion = 80 * mm
+        col_issues = page_width - col_num - col_status - col_criterion
+
+        table_data = [[
+            Paragraph("#", header_style),
+            Paragraph("Criterion", header_style),
+            Paragraph("Quality", header_style),
+            Paragraph("Issues", header_style),
+        ]]
+        row_colors = [("BACKGROUND", (0, 0), (-1, 0), BRAND)]
+
+        PASS_BG = colors.HexColor("#dcfce7")
+        WARN_BG = colors.HexColor("#fef9c3")
+        FAIL_BG = colors.HexColor("#fee2e2")
+
+        for i, rubric in enumerate(rubric_evals):
+            q = rubric.get("quality", "")
+            status_bg = PASS_BG if q == "pass" else WARN_BG if q == "warn" else FAIL_BG
+            status_hex = "#166534" if q == "pass" else "#92400e" if q == "warn" else "#991b1b"
+            issues = rubric.get("issues", [])
+            issues_content = []
+            for iss in issues:
+                issues_content.append(
+                    Paragraph(
+                        f'<font name="Helvetica-Bold">{_escape_xml(iss.get("dimension",""))}</font>'
+                        f': {_escape_xml(iss.get("detail",""))}',
+                        issue_sm,
+                    )
+                )
+
+            status_para = Paragraph(
+                f'<font name="Helvetica-Bold" color="{status_hex}">{q.upper()}</font>',
+                ParagraphStyle("status_cell", fontName="Helvetica-Bold", fontSize=8,
+                                leading=11, alignment=1),
+            )
+
+            row = [
+                Paragraph(str(i + 1), ParagraphStyle("num", fontName="Helvetica",
+                           fontSize=8, leading=11, textColor=GRAY_500, alignment=1)),
+                Paragraph(_escape_xml(rubric.get("criterion", "")), body_sm),
+                status_para,
+                issues_content if issues_content else [Paragraph("—", issue_sm)],
+            ]
+            table_data.append(row)
+
+            bg = colors.HexColor("#ffffff") if i % 2 == 0 else colors.HexColor("#f9fafb")
+            row_colors.append(("BACKGROUND", (0, i + 1), (-1, i + 1), bg))
+            row_colors.append(("BACKGROUND", (2, i + 1), (2, i + 1), status_bg))
+
+        tbl = Table(
+            table_data,
+            colWidths=[col_num, col_criterion, col_status, col_issues],
+            repeatRows=1,
+        )
+        style_cmds = [
+            ("GRID",          (0, 0), (-1, -1), 0.4, GRAY_200),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("ALIGN",         (0, 0), (0, -1), "CENTER"),
+            ("ALIGN",         (2, 0), (2, -1), "CENTER"),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+        ] + row_colors
+        tbl.setStyle(TableStyle(style_cmds))
+        elements.append(tbl)
+
+    # ── Coverage gaps ────────────────────────────────────────────────────────
+    if coverage_gaps:
+        elements.append(Spacer(1, 6 * mm))
+        elements.append(Paragraph("Coverage Gaps", styles["h2"]))
+        elements.append(
+            Paragraph("Topics found in the prompt but NOT covered by any rubric:",
+                      ParagraphStyle("gap_sub", fontName="Helvetica-Oblique", fontSize=9,
+                                      leading=13, textColor=GRAY_500, spaceAfter=4))
+        )
+        for gap in coverage_gaps:
+            elements.append(
+                Paragraph(
+                    f'<font name="Helvetica-Bold" color="#92400e">{_escape_xml(gap.get("prompt_topic",""))}</font>'
+                    f'<font color="#374151"> — {_escape_xml(gap.get("detail",""))}</font>',
+                    styles["list_item"],
+                )
+            )
+
+    def _footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(GRAY_500)
+        canvas.drawString(20 * mm, 12 * mm, "Shake Analyzer — Jupiter Shake")
+        canvas.drawRightString(A4[0] - 20 * mm, 12 * mm, f"Page {doc.page}")
+        canvas.restoreState()
+
+    doc.build(elements, onFirstPage=_footer, onLaterPages=_footer)
+    return buffer.getvalue()
+
+
 def generate_prompt_pdf(analysis: dict) -> bytes:
     """Generate a branded PDF report from a Prompt Quality Analysis result."""
     buffer = BytesIO()
