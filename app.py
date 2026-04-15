@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 from flask import Flask, request, jsonify, render_template, session
 from dotenv import load_dotenv
@@ -102,7 +103,7 @@ def upload():
                     "content": content
                 })
 
-    rubric_count = len([l for l in store["rubric_text"].split("\n") if l.strip()]) if store["rubric_text"] else 0
+    rubric_count = len(re.findall(r'\[\d+\]', store["rubric_text"])) if store["rubric_text"] else 0
     return jsonify({
         "status": "ok",
         "prompt_loaded": bool(store["prompt_text"]),
@@ -117,7 +118,7 @@ def upload():
 
 @app.route("/api/status", methods=["GET"])
 def status():
-    rubric_count = len([l for l in store["rubric_text"].split("\n") if l.strip()]) if store["rubric_text"] else 0
+    rubric_count = len(re.findall(r'\[\d+\]', store["rubric_text"])) if store["rubric_text"] else 0
     return jsonify({
         "prompt_loaded": bool(store["prompt_text"]),
         "prompt_length": len(store["prompt_text"]),
