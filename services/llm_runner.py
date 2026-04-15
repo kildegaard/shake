@@ -1,9 +1,11 @@
 import os
 import json
+import time
+import re
+import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import anthropic
 import openai
-import google.generativeai as genai
 
 # ~4 characters per token is a safe estimate for English text
 CHARS_PER_TOKEN = 4
@@ -110,41 +112,44 @@ def run_gpt(prompt_text: str, context_files: list[dict] = None) -> dict:
 
 
 GEMINI_MODEL = "gemini-3.1-pro-preview"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GEMINI_MAX_RETRIES = 2
 
 
 def run_gemini(prompt_text: str, context_files: list[dict] = None) -> dict:
-    import re
-    import time
-
-    genai.configure(api_key=os.getenv("GOOGLE_AI_API_KEY"))
-    model = genai.GenerativeModel(GEMINI_MODEL)
+    api_key = os.getenv("GOOGLE_AI_API_KEY")
+    url = GEMINI_API_URL.format(model=GEMINI_MODEL)
     full_prompt = _build_full_prompt(prompt_text, context_files)
+
+    payload = {
+        "contents": [{"parts": [{"text": full_prompt}]}],
+        "generationConfig": {"maxOutputTokens": 16384}
+    }
+    headers = {"Content-Type": "application/json"}
+    params = {"key": api_key}
 
     last_error = None
     for attempt in range(GEMINI_MAX_RETRIES):
         try:
-            response = model.generate_content(full_prompt)
-            return {
-                "model": "Gemini 3.1 Pro",
-                "response": response.text,
-                "status": "success"
-            }
-        except Exception as e:
-            last_error = e
-            error_str = str(e)
-            # Extract retry_delay suggested by the API and wait before retrying
-            delay_match = re.search(r"retry_delay\s*\{\s*seconds:\s*(\d+)", error_str)
+            resp = requests.post(url, json=payload, headers=headers, params=params, timeout=300)
+            if resp.status_code == 200:
+                data = resp.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                return {"model": "Gemini 3.1 Pro", "response": text, "status": "success"}
+
+            # Rate-limit: extract retry delay and wait
+            error_body = resp.text
+            last_error = f"HTTP {resp.status_code}: {error_body}"
+            delay_match = re.search(r"retry_delay[\":\s{]+seconds[\":\s]+(\d+)", error_body)
             wait = int(delay_match.group(1)) if delay_match else 30
             if attempt < GEMINI_MAX_RETRIES - 1:
                 time.sleep(wait)
+        except Exception as e:
+            last_error = str(e)
+            if attempt < GEMINI_MAX_RETRIES - 1:
+                time.sleep(15)
 
-    return {
-        "model": "Gemini 3.1 Pro",
-        "response": "",
-        "status": "error",
-        "error": str(last_error)
-    }
+    return {"model": "Gemini 3.1 Pro", "response": "", "status": "error", "error": str(last_error)}
 
 
 MODEL_RUNNERS = {
