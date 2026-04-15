@@ -8,13 +8,11 @@ import google.generativeai as genai
 # ~4 characters per token is a safe estimate for English text
 CHARS_PER_TOKEN = 4
 
-# GPT org limit is 30,000 TPM; reserve 4,096 for output → ~25,904 input tokens
-GPT_MAX_INPUT_TOKENS = 25_000
+# GPT org TPM limit is 30,000; reserve 4,096 for output → ~25,904 input tokens max
+# We use 20,000 to stay comfortably under the limit
+GPT_MAX_INPUT_TOKENS = 20_000
 GPT_MAX_OUTPUT_TOKENS = 4_096
-
-
-def _estimate_tokens(text: str) -> int:
-    return len(text) // CHARS_PER_TOKEN
+GPT_MODEL = "gpt-5.4"
 
 
 def _build_full_prompt(prompt_text: str, context_files: list[dict] = None) -> str:
@@ -27,40 +25,38 @@ def _build_full_prompt(prompt_text: str, context_files: list[dict] = None) -> st
 
 
 def _build_truncated_prompt(prompt_text: str, context_files: list[dict] = None, max_input_tokens: int = GPT_MAX_INPUT_TOKENS) -> tuple[str, bool]:
-    """Build prompt and truncate context files if the total exceeds max_input_tokens.
+    """Build prompt truncating context files so total stays within max_input_tokens.
     Returns (prompt_text, was_truncated)."""
     max_chars = max_input_tokens * CHARS_PER_TOKEN
-    base = prompt_text
-    was_truncated = False
 
-    if not context_files:
-        return base, False
+    full = _build_full_prompt(prompt_text, context_files)
 
+    if len(full) <= max_chars:
+        return full, False
+
+    # Hard truncate: keep the prompt intact and trim context progressively
     header = "\n\n---\n\n## Attached Context Files\n"
-    base_tokens = _estimate_tokens(base + header)
-    remaining_chars = max_chars - (base_tokens * CHARS_PER_TOKEN)
+    base = prompt_text
+    budget = max_chars - len(base) - len(header) - 100  # 100-char safety buffer
 
-    if remaining_chars <= 0:
-        # Prompt itself is too long — truncate it
-        base = prompt_text[: max_chars - len(header)]
-        was_truncated = True
-        remaining_chars = 0
+    if budget <= 0:
+        # Even the base prompt is too big — truncate it
+        truncated = (prompt_text[:max_chars] +
+                     "\n\n[... prompt truncated to fit token limit ...]")
+        return truncated, True
 
     assembled_files = ""
-    for f in context_files:
+    for f in context_files or []:
         file_header = f"\n### {f['name']}\n\n"
-        available = remaining_chars - len(assembled_files) - len(file_header) - 50  # 50-char safety buffer
-        if available <= 0:
-            was_truncated = True
+        space_left = budget - len(assembled_files) - len(file_header)
+        if space_left <= 0:
             break
         content = f["content"]
-        if len(content) > available:
-            content = content[:available] + "\n\n[... content truncated to fit token limit ...]"
-            was_truncated = True
+        if len(content) > space_left:
+            content = content[:space_left] + "\n\n[... truncated to fit token limit ...]"
         assembled_files += file_header + content + "\n"
 
-    full = base + header + assembled_files
-    return full, was_truncated
+    return base + header + assembled_files, True
 
 
 def run_opus(prompt_text: str, context_files: list[dict] = None) -> dict:
@@ -93,7 +89,7 @@ def run_gpt(prompt_text: str, context_files: list[dict] = None) -> dict:
         full_prompt, was_truncated = _build_truncated_prompt(prompt_text, context_files, GPT_MAX_INPUT_TOKENS)
 
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model=GPT_MODEL,
             max_tokens=GPT_MAX_OUTPUT_TOKENS,
             messages=[{"role": "user", "content": full_prompt}]
         )
@@ -103,7 +99,7 @@ def run_gpt(prompt_text: str, context_files: list[dict] = None) -> dict:
             "status": "success"
         }
         if was_truncated:
-            result["warning"] = "Context was truncated to fit within the 30,000 TPM token limit."
+            result["warning"] = "Context was truncated to fit within the token limit."
         return result
     except Exception as e:
         return {
