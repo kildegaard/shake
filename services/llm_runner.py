@@ -90,7 +90,7 @@ def run_gpt(prompt_text: str, context_files: list[dict] = None) -> dict:
 
         response = client.chat.completions.create(
             model=GPT_MODEL,
-            max_tokens=GPT_MAX_OUTPUT_TOKENS,
+            max_completion_tokens=GPT_MAX_OUTPUT_TOKENS,
             messages=[{"role": "user", "content": full_prompt}]
         )
         result = {
