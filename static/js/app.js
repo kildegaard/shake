@@ -60,7 +60,8 @@ function updateStatus(data) {
     appState.contextFilesCount = data.context_files_count;
 
     if (data.rubric_loaded) {
-        rubricsEl.textContent = `Rubrics: ${data.rubric_length.toLocaleString()} chars`;
+        const count = data.rubric_count ?? 0;
+        rubricsEl.textContent = `Rubrics: ${count} item${count !== 1 ? 's' : ''}`;
         rubricsEl.className = 'status-pill status-loaded';
         appState.rubricLoaded = true;
     } else {
@@ -75,7 +76,7 @@ function handlePromptFile(input) {
     if (input.files.length > 0) {
         const nameEl = document.getElementById('prompt-file-name');
         nameEl.textContent = input.files[0].name;
-        nameEl.classList.remove('hidden');
+        nameEl.className = 'upload-file-tag';
     }
 }
 
@@ -84,8 +85,7 @@ function handleContextFiles(input) {
     list.innerHTML = '';
     for (const f of input.files) {
         const li = document.createElement('li');
-        li.className = 'flex items-center gap-2';
-        li.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-brand-500"></span> ${f.name}`;
+        li.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>${f.name}`;
         list.appendChild(li);
     }
 }
@@ -94,7 +94,7 @@ function handleRubricFile(input) {
     if (input.files.length > 0) {
         const nameEl = document.getElementById('rubric-file-name');
         nameEl.textContent = input.files[0].name;
-        nameEl.classList.remove('hidden');
+        nameEl.className = 'upload-file-tag';
     }
 }
 
@@ -184,8 +184,10 @@ async function clearAll() {
         document.getElementById('rubric-file').value = '';
         document.getElementById('context-files').value = '';
         document.getElementById('context-file-list').innerHTML = '';
-        document.getElementById('prompt-file-name').classList.add('hidden');
-        document.getElementById('rubric-file-name').classList.add('hidden');
+        const pfn = document.getElementById('prompt-file-name');
+        pfn.textContent = ''; pfn.className = 'upload-file-tag hidden';
+        const rfn = document.getElementById('rubric-file-name');
+        rfn.textContent = ''; rfn.className = 'upload-file-tag hidden';
         document.getElementById('prompt-analysis-results').innerHTML = '<div class="empty-state"><p>Upload a prompt and click "Analyze Prompt" to evaluate its quality.</p></div>';
         document.getElementById('rubric-analysis-results').innerHTML = '<div class="empty-state"><p>Upload a prompt and rubrics, then click "Analyze Rubrics" to evaluate quality and coverage.</p></div>';
         document.getElementById('llm-results').innerHTML = '<div class="empty-state"><p>Select models and click "Run Selected Models" to generate responses.</p></div>';

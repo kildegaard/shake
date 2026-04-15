@@ -59,53 +59,85 @@
 
     <main class="max-w-7xl mx-auto px-6 py-6">
         <!-- Upload Panel -->
-        <section id="upload-panel" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
-            <div class="flex items-center justify-between mb-4">
-                <h2 class="text-lg font-semibold text-gray-800">Upload Materials</h2>
-                <button onclick="clearAll()" class="text-sm text-red-500 hover:text-red-700 transition">Clear All</button>
+        <section id="upload-panel" class="upload-panel mb-6">
+            <div class="upload-panel-header">
+                <div class="flex items-center gap-2">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <h2 class="text-base font-semibold text-gray-800">Upload Materials</h2>
+                </div>
+                <button onclick="clearAll()" class="btn-clear-all">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                    Clear All
+                </button>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <!-- Prompt -->
-                <div class="space-y-3">
-                    <label class="block text-sm font-medium text-gray-700">Prompt</label>
-                    <textarea id="prompt-text" rows="5" placeholder="Paste your crisis management prompt here..."
-                        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-transparent resize-none"></textarea>
-                    <div class="text-center text-xs text-gray-400">— or —</div>
-                    <label class="upload-dropzone" id="prompt-dropzone">
+
+            <div class="upload-grid">
+                <!-- Step 1: Prompt -->
+                <div class="upload-card upload-card-prompt">
+                    <div class="upload-card-title">
+                        <span class="upload-step-badge upload-step-badge-prompt">1</span>
+                        <div>
+                            <div class="upload-card-label">Prompt</div>
+                            <div class="upload-card-sub">Crisis management scenario</div>
+                        </div>
+                    </div>
+                    <textarea id="prompt-text" rows="4" placeholder="Paste your crisis management prompt here..."
+                        class="upload-textarea upload-textarea-prompt"></textarea>
+                    <div class="upload-or-divider"><span>or upload a file</span></div>
+                    <label class="upload-dropzone upload-dropzone-prompt" id="prompt-dropzone">
                         <input type="file" id="prompt-file" accept=".txt,.md,.pdf,.docx" class="hidden" onchange="handlePromptFile(this)">
-                        <span class="text-sm text-gray-500">Drop file or click to upload</span>
-                        <span class="text-xs text-gray-400">.txt, .md, .pdf, .docx</span>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="mb-1 opacity-50"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        <span class="text-xs font-medium text-gray-500">Drop file or click</span>
+                        <span class="text-xs text-gray-400">.txt · .md · .pdf · .docx</span>
                     </label>
-                    <div id="prompt-file-name" class="text-xs text-brand-600 hidden"></div>
+                    <div id="prompt-file-name" class="upload-file-tag hidden"></div>
                 </div>
 
-                <!-- Context Files -->
-                <div class="space-y-3">
-                    <label class="block text-sm font-medium text-gray-700">Context Files</label>
-                    <label class="upload-dropzone upload-dropzone-large" id="context-dropzone">
+                <!-- Step 2: Context Files -->
+                <div class="upload-card upload-card-context">
+                    <div class="upload-card-title">
+                        <span class="upload-step-badge upload-step-badge-context">2</span>
+                        <div>
+                            <div class="upload-card-label">Context Files</div>
+                            <div class="upload-card-sub">Rosters, policies, org charts</div>
+                        </div>
+                    </div>
+                    <label class="upload-dropzone upload-dropzone-context upload-dropzone-tall" id="context-dropzone">
                         <input type="file" id="context-files" multiple class="hidden" onchange="handleContextFiles(this)">
-                        <span class="text-sm text-gray-500">Drop files or click to upload</span>
-                        <span class="text-xs text-gray-400">Employee rosters, policies, org charts, etc.</span>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="mb-1 opacity-50"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                        <span class="text-xs font-medium text-gray-500">Drop files or click to upload</span>
+                        <span class="text-xs text-gray-400">Multiple files supported</span>
                     </label>
-                    <ul id="context-file-list" class="space-y-1 text-xs text-gray-600"></ul>
+                    <ul id="context-file-list" class="context-file-list"></ul>
                 </div>
 
-                <!-- Rubrics -->
-                <div class="space-y-3">
-                    <label class="block text-sm font-medium text-gray-700">Rubrics</label>
-                    <textarea id="rubric-text" rows="5" placeholder="Paste your rubric criteria here (one per line)..."
-                        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-transparent resize-none"></textarea>
-                    <div class="text-center text-xs text-gray-400">— or —</div>
-                    <label class="upload-dropzone" id="rubric-dropzone">
+                <!-- Step 3: Rubrics -->
+                <div class="upload-card upload-card-rubric">
+                    <div class="upload-card-title">
+                        <span class="upload-step-badge upload-step-badge-rubric">3</span>
+                        <div>
+                            <div class="upload-card-label">Rubrics</div>
+                            <div class="upload-card-sub">One criterion per line</div>
+                        </div>
+                    </div>
+                    <textarea id="rubric-text" rows="4" placeholder="Paste rubric criteria here, one per line..."
+                        class="upload-textarea upload-textarea-rubric"></textarea>
+                    <div class="upload-or-divider"><span>or upload a file</span></div>
+                    <label class="upload-dropzone upload-dropzone-rubric" id="rubric-dropzone">
                         <input type="file" id="rubric-file" accept=".txt,.md,.pdf,.docx,.csv" class="hidden" onchange="handleRubricFile(this)">
-                        <span class="text-sm text-gray-500">Drop file or click to upload</span>
-                        <span class="text-xs text-gray-400">.txt, .md, .pdf, .docx, .csv</span>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="mb-1 opacity-50"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                        <span class="text-xs font-medium text-gray-500">Drop file or click</span>
+                        <span class="text-xs text-gray-400">.txt · .md · .pdf · .docx · .csv</span>
                     </label>
-                    <div id="rubric-file-name" class="text-xs text-brand-600 hidden"></div>
+                    <div id="rubric-file-name" class="upload-file-tag hidden"></div>
                 </div>
             </div>
-            <div class="mt-4 flex justify-end">
-                <button onclick="uploadAll()" class="btn-primary">Upload & Process</button>
+
+            <div class="upload-footer">
+                <button onclick="uploadAll()" class="btn-upload">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Upload &amp; Process
+                </button>
             </div>
         </section>
 

@@ -102,6 +102,7 @@ def upload():
                     "content": content
                 })
 
+    rubric_count = len([l for l in store["rubric_text"].split("\n") if l.strip()]) if store["rubric_text"] else 0
     return jsonify({
         "status": "ok",
         "prompt_loaded": bool(store["prompt_text"]),
@@ -110,11 +111,13 @@ def upload():
         "context_file_names": [f["name"] for f in store["context_files"]],
         "rubric_loaded": bool(store["rubric_text"]),
         "rubric_length": len(store["rubric_text"]),
+        "rubric_count": rubric_count,
     })
 
 
 @app.route("/api/status", methods=["GET"])
 def status():
+    rubric_count = len([l for l in store["rubric_text"].split("\n") if l.strip()]) if store["rubric_text"] else 0
     return jsonify({
         "prompt_loaded": bool(store["prompt_text"]),
         "prompt_length": len(store["prompt_text"]),
@@ -123,6 +126,7 @@ def status():
         "context_file_names": [f["name"] for f in store["context_files"]],
         "rubric_loaded": bool(store["rubric_text"]),
         "rubric_length": len(store["rubric_text"]),
+        "rubric_count": rubric_count,
         "rubric_preview": store["rubric_text"][:200] if store["rubric_text"] else "",
         "llm_responses": {k: {"model": v["model"], "status": v["status"]} for k, v in store["llm_responses"].items()},
     })
