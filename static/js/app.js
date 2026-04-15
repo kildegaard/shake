@@ -7,6 +7,9 @@ let appState = {
     rheaResults: {}
 };
 
+// Raw response text stored by modelKey for markdown toggle + PDF
+const llmRawResponses = {};
+
 // ─── Tab Navigation ───
 function switchTab(tabId) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -531,20 +534,33 @@ function renderLLMResults(results) {
 
         const safeModel = escapeHtml(r.model);
         const safeKey = r.model.replace(/\s/g, '_').replace(/\./g, '');
-        const responseContent = r.status === 'success' ? escapeHtml(r.response) : `Error: ${escapeHtml(r.error || 'Unknown error')}`;
 
-        const downloadBtn = r.status === 'success'
-            ? `<button class="btn-download-pdf" onclick="downloadResponsePDF('${safeKey}')" title="Download as PDF">⬇ PDF</button>`
-            : '';
+        if (r.status === 'success') {
+            llmRawResponses[safeKey] = r.response || '';
+        }
+
+        const isSuccess = r.status === 'success';
+        const initialBody = isSuccess
+            ? marked.parse(r.response || '')
+            : `<span style="color:#991b1b">Error: ${escapeHtml(r.error || 'Unknown error')}</span>`;
+
+        const controls = isSuccess ? `
+            <span class="llm-card-controls">
+                <label class="md-toggle-label">
+                    <input type="checkbox" id="md-toggle-${safeKey}" checked onchange="toggleMarkdown('${safeKey}')">
+                    <span>Render MD</span>
+                </label>
+                <button class="btn-download-pdf" onclick="downloadResponsePDF('${safeKey}')" title="Download as PDF">⬇ PDF</button>
+            </span>` : '';
 
         html += `
             <div class="llm-response-col">
                 <h3 class="flex items-center justify-between">
                     <span class="flex items-center gap-2">${safeModel} ${statusBadge}</span>
-                    ${downloadBtn}
+                    ${controls}
                 </h3>
                 ${warningBanner}
-                <div class="response-body" id="llm-body-${safeKey}">${responseContent}</div>
+                <div class="response-body markdown-rendered" id="llm-body-${safeKey}">${initialBody}</div>
             </div>
         `;
     }
@@ -552,42 +568,88 @@ function renderLLMResults(results) {
     container.innerHTML = html;
 }
 
+function toggleMarkdown(modelKey) {
+    const checkbox = document.getElementById(`md-toggle-${modelKey}`);
+    const bodyEl = document.getElementById(`llm-body-${modelKey}`);
+    const raw = llmRawResponses[modelKey] || '';
+
+    if (checkbox.checked) {
+        bodyEl.innerHTML = marked.parse(raw);
+        bodyEl.classList.add('markdown-rendered');
+        bodyEl.classList.remove('markdown-raw');
+    } else {
+        bodyEl.textContent = raw;
+        bodyEl.classList.remove('markdown-rendered');
+        bodyEl.classList.add('markdown-raw');
+    }
+}
+
 function downloadResponsePDF(modelKey) {
     const bodyEl = document.getElementById(`llm-body-${modelKey}`);
     if (!bodyEl) return;
 
+    const checkbox = document.getElementById(`md-toggle-${modelKey}`);
+    const isRendered = checkbox && checkbox.checked;
     const modelName = modelKey.replace(/_/g, ' ');
-    const responseText = bodyEl.innerText || bodyEl.textContent;
     const date = new Date().toLocaleString();
-
     const printWindow = window.open('', '_blank');
-    printWindow.document.write(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>${modelName} — Response</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Arial, sans-serif; color: #1f2937; padding: 48px; line-height: 1.7; font-size: 13px; }
-    header { border-bottom: 2px solid #4263eb; padding-bottom: 16px; margin-bottom: 24px; }
-    header h1 { font-size: 20px; font-weight: 700; color: #4263eb; }
-    header p { font-size: 11px; color: #6b7280; margin-top: 4px; }
-    .response { white-space: pre-wrap; word-break: break-word; }
-    @media print {
-      body { padding: 24px; }
-      button { display: none; }
-    }
-  </style>
-</head>
-<body>
+
+    const header = `
   <header>
-    <h1>Shake Analyzer — ${modelName}</h1>
-    <p>Generated: ${date}</p>
-  </header>
-  <div class="response">${responseText}</div>
-  <script>window.onload = function(){ window.print(); }<\/script>
-</body>
-</html>`);
+    <div class="header-logo">S</div>
+    <div>
+      <h1>Shake Analyzer — ${modelName}</h1>
+      <p>Jupiter Shake &nbsp;·&nbsp; Generated: ${date}</p>
+    </div>
+  </header>`;
+
+    const baseStyles = `
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; color: #1f2937; padding: 48px; line-height: 1.75; font-size: 13px; }
+    header { display: flex; align-items: center; gap: 14px; border-bottom: 2px solid #4263eb; padding-bottom: 16px; margin-bottom: 28px; }
+    .header-logo { width: 36px; height: 36px; background: #4263eb; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 18px; flex-shrink: 0; }
+    header h1 { font-size: 18px; font-weight: 700; color: #1f2937; }
+    header p { font-size: 11px; color: #6b7280; margin-top: 2px; }
+    @media print { body { padding: 24px; } }`;
+
+    if (isRendered) {
+        const renderedHtml = bodyEl.innerHTML;
+        printWindow.document.write(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>${modelName}</title><style>
+${baseStyles}
+.content h1 { font-size: 1.5em; font-weight: 700; margin: 1.2em 0 .5em; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: .3em; }
+.content h2 { font-size: 1.25em; font-weight: 700; margin: 1.1em 0 .4em; color: #1f2937; }
+.content h3 { font-size: 1.05em; font-weight: 600; margin: 1em 0 .3em; color: #374151; }
+.content p  { margin: .6em 0; }
+.content ul, .content ol { margin: .5em 0 .5em 1.5em; }
+.content li { margin: .25em 0; }
+.content strong { font-weight: 700; }
+.content em { font-style: italic; }
+.content code { font-family: 'Courier New', monospace; background: #f3f4f6; padding: 1px 5px; border-radius: 3px; font-size: .92em; }
+.content pre { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; margin: .8em 0; overflow-x: auto; }
+.content pre code { background: none; padding: 0; }
+.content blockquote { border-left: 3px solid #4263eb; margin: .8em 0; padding: .4em 1em; color: #4b5563; background: #f0f4ff; border-radius: 0 4px 4px 0; }
+.content table { width: 100%; border-collapse: collapse; margin: .8em 0; font-size: .92em; }
+.content th { background: #4263eb; color: white; padding: 7px 10px; text-align: left; }
+.content td { border: 1px solid #e5e7eb; padding: 6px 10px; }
+.content tr:nth-child(even) td { background: #f9fafb; }
+.content hr { border: none; border-top: 1px solid #e5e7eb; margin: 1em 0; }
+.content a { color: #4263eb; }
+</style></head>
+<body>${header}<div class="content">${renderedHtml}</div>
+<script>window.onload=function(){window.print();}<\/script>
+</body></html>`);
+    } else {
+        const rawText = llmRawResponses[modelKey] || '';
+        printWindow.document.write(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>${modelName}</title><style>
+${baseStyles}
+.content { white-space: pre-wrap; word-break: break-word; font-family: 'Courier New', monospace; font-size: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 16px; }
+</style></head>
+<body>${header}<div class="content">${escapeHtml(rawText)}</div>
+<script>window.onload=function(){window.print();}<\/script>
+</body></html>`);
+    }
     printWindow.document.close();
 }
 

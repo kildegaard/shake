@@ -210,6 +210,28 @@
     padding: 6px 10px;
     margin-bottom: 10px;
 }
+.llm-card-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.md-toggle-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: #6b7280;
+    cursor: pointer;
+    user-select: none;
+}
+.md-toggle-label input[type="checkbox"] {
+    width: 13px;
+    height: 13px;
+    accent-color: #4263eb;
+    cursor: pointer;
+}
 .btn-download-pdf {
     display: inline-flex;
     align-items: center;
@@ -229,6 +251,119 @@
     background: #4263eb;
     color: #ffffff;
     border-color: #4263eb;
+}
+
+/* ── Markdown rendered view ── */
+.response-body.markdown-rendered {
+    font-size: 0.875rem;
+    color: #1f2937;
+    line-height: 1.7;
+    max-height: 600px;
+    overflow-y: auto;
+}
+.response-body.markdown-rendered h1 {
+    font-size: 1.25em;
+    font-weight: 700;
+    margin: 1em 0 .4em;
+    color: #111827;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: .25em;
+}
+.response-body.markdown-rendered h2 {
+    font-size: 1.1em;
+    font-weight: 700;
+    margin: .9em 0 .35em;
+    color: #1f2937;
+}
+.response-body.markdown-rendered h3 {
+    font-size: 1em;
+    font-weight: 600;
+    margin: .8em 0 .3em;
+    color: #374151;
+}
+.response-body.markdown-rendered p {
+    margin: .5em 0;
+}
+.response-body.markdown-rendered ul,
+.response-body.markdown-rendered ol {
+    margin: .4em 0 .4em 1.4em;
+}
+.response-body.markdown-rendered li {
+    margin: .2em 0;
+}
+.response-body.markdown-rendered strong { font-weight: 700; }
+.response-body.markdown-rendered em    { font-style: italic; }
+.response-body.markdown-rendered code {
+    font-family: 'Courier New', Courier, monospace;
+    background: #f3f4f6;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: .88em;
+    color: #be185d;
+}
+.response-body.markdown-rendered pre {
+    background: #1e1e2e;
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin: .6em 0;
+    overflow-x: auto;
+}
+.response-body.markdown-rendered pre code {
+    background: none;
+    color: #cdd6f4;
+    font-size: .85em;
+    padding: 0;
+}
+.response-body.markdown-rendered blockquote {
+    border-left: 3px solid #4263eb;
+    background: #f0f4ff;
+    margin: .6em 0;
+    padding: .4em .9em;
+    border-radius: 0 4px 4px 0;
+    color: #4b5563;
+}
+.response-body.markdown-rendered table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: .6em 0;
+    font-size: .85em;
+}
+.response-body.markdown-rendered th {
+    background: #4263eb;
+    color: #fff;
+    padding: 6px 10px;
+    text-align: left;
+    font-weight: 600;
+}
+.response-body.markdown-rendered td {
+    border: 1px solid #e5e7eb;
+    padding: 5px 10px;
+}
+.response-body.markdown-rendered tr:nth-child(even) td {
+    background: #f9fafb;
+}
+.response-body.markdown-rendered hr {
+    border: none;
+    border-top: 1px solid #e5e7eb;
+    margin: .8em 0;
+}
+.response-body.markdown-rendered a {
+    color: #4263eb;
+    text-decoration: underline;
+}
+
+/* ── Raw markdown view ── */
+.response-body.markdown-raw {
+    font-size: 0.82rem;
+    color: #374151;
+    white-space: pre-wrap;
+    line-height: 1.625;
+    max-height: 600px;
+    overflow-y: auto;
+    font-family: 'Courier New', Courier, monospace;
+    background: #f9fafb;
+    border-radius: 6px;
+    padding: 10px 12px;
 }
 
 /* Quality indicator */
