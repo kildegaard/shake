@@ -109,25 +109,42 @@ def run_gpt(prompt_text: str, context_files: list[dict] = None) -> dict:
         }
 
 
-def run_gemini(prompt_text: str, context_files: list[dict] = None) -> dict:
-    try:
-        genai.configure(api_key=os.getenv("GOOGLE_AI_API_KEY"))
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        full_prompt = _build_full_prompt(prompt_text, context_files)
+GEMINI_MODEL = "gemini-3.1-pro-preview"
+GEMINI_MAX_RETRIES = 2
 
-        response = model.generate_content(full_prompt)
-        return {
-            "model": "Gemini 3.1 Pro",
-            "response": response.text,
-            "status": "success"
-        }
-    except Exception as e:
-        return {
-            "model": "Gemini 3.1 Pro",
-            "response": "",
-            "status": "error",
-            "error": str(e)
-        }
+
+def run_gemini(prompt_text: str, context_files: list[dict] = None) -> dict:
+    import re
+    import time
+
+    genai.configure(api_key=os.getenv("GOOGLE_AI_API_KEY"))
+    model = genai.GenerativeModel(GEMINI_MODEL)
+    full_prompt = _build_full_prompt(prompt_text, context_files)
+
+    last_error = None
+    for attempt in range(GEMINI_MAX_RETRIES):
+        try:
+            response = model.generate_content(full_prompt)
+            return {
+                "model": "Gemini 3.1 Pro",
+                "response": response.text,
+                "status": "success"
+            }
+        except Exception as e:
+            last_error = e
+            error_str = str(e)
+            # Extract retry_delay suggested by the API and wait before retrying
+            delay_match = re.search(r"retry_delay\s*\{\s*seconds:\s*(\d+)", error_str)
+            wait = int(delay_match.group(1)) if delay_match else 30
+            if attempt < GEMINI_MAX_RETRIES - 1:
+                time.sleep(wait)
+
+    return {
+        "model": "Gemini 3.1 Pro",
+        "response": "",
+        "status": "error",
+        "error": str(last_error)
+    }
 
 
 MODEL_RUNNERS = {
