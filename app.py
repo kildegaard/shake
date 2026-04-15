@@ -5,6 +5,11 @@ from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 from PyPDF2 import PdfReader
 from docx import Document
+from services.prompt_analyzer import analyze_prompt as _analyze_prompt
+from services.rubric_analyzer import analyze_rubrics as _analyze_rubrics
+from services.llm_runner import run_models as _run_models
+from services.rhea_evaluator import evaluate_response as _evaluate_response
+from services.pdf_generator import generate_response_pdf as _generate_pdf
 
 load_dotenv()
 
@@ -123,9 +128,11 @@ def analyze_prompt():
     if not store["prompt_text"]:
         return jsonify({"error": "No prompt loaded. Please upload a prompt first."}), 400
 
-    from services.prompt_analyzer import analyze_prompt as _analyze
-    result = _analyze(store["prompt_text"], store["context_files"] or None)
-    return jsonify(result)
+    try:
+        result = _analyze_prompt(store["prompt_text"], store["context_files"] or None)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": f"Prompt analysis failed: {e}"}), 500
 
 
 @app.route("/api/analyze/rubrics", methods=["POST"])
@@ -135,9 +142,13 @@ def analyze_rubrics():
     if not store["prompt_text"]:
         return jsonify({"error": "No prompt loaded. Rubric analysis requires the prompt for coverage gap detection."}), 400
 
-    from services.rubric_analyzer import analyze_rubrics as _analyze
-    result = _analyze(store["rubric_text"], store["prompt_text"])
-    return jsonify(result)
+    try:
+        result = _analyze_rubrics(store["rubric_text"], store["prompt_text"])
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Rubric analysis failed: {e}"}), 500
 
 
 @app.route("/api/llm/run", methods=["POST"])
@@ -148,8 +159,7 @@ def run_llm():
     data = request.get_json() or {}
     models = data.get("models", ["opus", "gpt", "gemini"])
 
-    from services.llm_runner import run_models
-    results = run_models(store["prompt_text"], store["context_files"] or None, models)
+    results = _run_models(store["prompt_text"], store["context_files"] or None, models)
 
     for r in results:
         key = r["model"].lower().replace(" ", "_").replace(".", "")
@@ -183,10 +193,38 @@ def rhea_evaluate():
             "available_models": available
         }), 400
 
-    from services.rhea_evaluator import evaluate_response
-    result = evaluate_response(model_response, store["rubric_text"])
-    result["model_name"] = model_name
-    return jsonify(result)
+    try:
+        result = _evaluate_response(model_response, store["rubric_text"])
+        result["model_name"] = model_name
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": f"Rhea evaluation failed: {e}"}), 500
+
+
+@app.route("/api/llm/pdf", methods=["POST"])
+def download_pdf():
+    data = request.get_json() or {}
+    model_key = data.get("model_key")
+    is_raw = data.get("is_raw", False)
+
+    if not model_key or model_key not in store["llm_responses"]:
+        return jsonify({"error": "Model response not found."}), 404
+
+    r = store["llm_responses"][model_key]
+    if r["status"] != "success":
+        return jsonify({"error": f"Model {r['model']} has errors and cannot be exported."}), 400
+
+    try:
+        pdf_bytes = _generate_pdf(r["model"], r["response"], is_raw=is_raw)
+        from flask import Response
+        safe_name = model_key.replace(" ", "_")
+        return Response(
+            pdf_bytes,
+            mimetype="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}_response.pdf"'},
+        )
+    except Exception as e:
+        return jsonify({"error": f"PDF generation failed: {e}"}), 500
 
 
 @app.route("/api/clear", methods=["POST"])
@@ -199,4 +237,4 @@ def clear():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5000, use_reloader=True, reloader_type="stat")

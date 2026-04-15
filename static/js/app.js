@@ -584,71 +584,39 @@ function toggleMarkdown(modelKey) {
     }
 }
 
-function downloadResponsePDF(modelKey) {
-    const bodyEl = document.getElementById(`llm-body-${modelKey}`);
-    if (!bodyEl) return;
-
+async function downloadResponsePDF(modelKey) {
     const checkbox = document.getElementById(`md-toggle-${modelKey}`);
-    const isRendered = checkbox && checkbox.checked;
-    const modelName = modelKey.replace(/_/g, ' ');
-    const date = new Date().toLocaleString();
-    const filename = `${modelKey}_response_${Date.now()}.pdf`;
+    const isRaw = !(checkbox && checkbox.checked);
 
-    // Build a hidden container to render the PDF content
-    const container = document.createElement('div');
-    container.style.cssText = 'position:absolute;left:-9999px;top:0;width:750px;font-family:Segoe UI,Arial,sans-serif;color:#1f2937;font-size:13px;line-height:1.75;';
+    const btn = document.querySelector(`button[onclick="downloadResponsePDF('${modelKey}')"]`);
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
 
-    const headerHtml = `
-        <div style="display:flex;align-items:center;gap:14px;border-bottom:2px solid #4263eb;padding-bottom:14px;margin-bottom:22px;">
-            <div style="width:34px;height:34px;background:#4263eb;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:17px;flex-shrink:0;">S</div>
-            <div>
-                <div style="font-size:17px;font-weight:700;color:#111827;">Shake Analyzer — ${modelName}</div>
-                <div style="font-size:11px;color:#6b7280;margin-top:2px;">Jupiter Shake &nbsp;·&nbsp; ${date}</div>
-            </div>
-        </div>`;
+    try {
+        const res = await fetch('/api/llm/pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_key: modelKey, is_raw: isRaw })
+        });
 
-    if (isRendered) {
-        const contentStyles = `
-            <style>
-                .pdf-content h1{font-size:1.3em;font-weight:700;margin:1em 0 .4em;color:#111827;border-bottom:1px solid #e5e7eb;padding-bottom:.25em;}
-                .pdf-content h2{font-size:1.15em;font-weight:700;margin:.9em 0 .35em;color:#1f2937;}
-                .pdf-content h3{font-size:1em;font-weight:600;margin:.8em 0 .3em;color:#374151;}
-                .pdf-content p{margin:.5em 0;}
-                .pdf-content ul,.pdf-content ol{margin:.4em 0 .4em 1.4em;}
-                .pdf-content li{margin:.2em 0;}
-                .pdf-content strong{font-weight:700;}
-                .pdf-content em{font-style:italic;}
-                .pdf-content code{font-family:'Courier New',monospace;background:#f3f4f6;padding:1px 5px;border-radius:3px;font-size:.88em;color:#be185d;}
-                .pdf-content pre{background:#f3f4f6;border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px;margin:.6em 0;white-space:pre-wrap;word-break:break-word;}
-                .pdf-content pre code{background:none;color:#374151;padding:0;}
-                .pdf-content blockquote{border-left:3px solid #4263eb;background:#f0f4ff;margin:.6em 0;padding:.4em .9em;border-radius:0 4px 4px 0;color:#4b5563;}
-                .pdf-content table{width:100%;border-collapse:collapse;margin:.6em 0;font-size:.88em;}
-                .pdf-content th{background:#4263eb;color:#fff;padding:6px 10px;text-align:left;font-weight:600;}
-                .pdf-content td{border:1px solid #e5e7eb;padding:5px 10px;}
-                .pdf-content tr:nth-child(even) td{background:#f9fafb;}
-                .pdf-content hr{border:none;border-top:1px solid #e5e7eb;margin:.8em 0;}
-                .pdf-content a{color:#4263eb;}
-            </style>`;
-        container.innerHTML = contentStyles + headerHtml + `<div class="pdf-content">${bodyEl.innerHTML}</div>`;
-    } else {
-        const rawText = llmRawResponses[modelKey] || '';
-        container.innerHTML = headerHtml + `<div style="white-space:pre-wrap;word-break:break-word;font-family:'Courier New',monospace;font-size:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:14px;">${escapeHtml(rawText)}</div>`;
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+        }
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${modelKey}_response.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        showToast('PDF download failed: ' + e.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '⬇ PDF'; }
     }
-
-    document.body.appendChild(container);
-
-    const opt = {
-        margin:       [12, 14, 12, 14],
-        filename:     filename,
-        image:        { type: 'jpeg', quality: 0.97 },
-        html2canvas:  { scale: 2, useCORS: true, letterRendering: true },
-        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] }
-    };
-
-    html2pdf().set(opt).from(container).save().then(() => {
-        document.body.removeChild(container);
-    });
 }
 
 // ─── Rhea Evaluator ───
