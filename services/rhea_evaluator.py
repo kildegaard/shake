@@ -1,6 +1,7 @@
 import anthropic
 import os
 import json
+import re
 
 RHEA_SYSTEM_PROMPT = """{
   "instructions": {
@@ -43,15 +44,30 @@ RHEA_SYSTEM_PROMPT = """{
 
 
 def parse_rubrics_to_criteria(rubric_text: str) -> list[dict]:
+    """
+    Parse rubric text into criteria dicts with point values.
+    Lines starting with [N] are rubric items; Source:/Sources: lines are metadata and are skipped.
+    """
     lines = rubric_text.strip().split("\n")
     criteria = []
     for line in lines:
         line = line.strip()
         if not line:
             continue
-        cleaned = line.lstrip("0123456789.-•) ").strip()
-        if cleaned:
-            criteria.append({"criteria": cleaned})
+        # Skip source attribution lines
+        if re.match(r'^sources?:', line, re.IGNORECASE):
+            continue
+        # Match lines that start with [N] — rubric items with point values
+        match = re.match(r'^\[(\d+)\]\s+(.+)', line)
+        if match:
+            points = int(match.group(1))
+            text = match.group(2).strip()
+            criteria.append({"criteria": text, "points": points})
+        else:
+            # Fallback: plain lines without a [N] prefix
+            cleaned = line.lstrip("0123456789.-•) ").strip()
+            if cleaned:
+                criteria.append({"criteria": cleaned, "points": 0})
     return criteria
 
 
@@ -60,13 +76,19 @@ def evaluate_response(model_response: str, rubric_text: str) -> dict:
 
     criteria_list = parse_rubrics_to_criteria(rubric_text)
 
+    # Build a lookup of points by criteria text (for attaching back after LLM evaluation)
+    points_map = {c["criteria"]: c["points"] for c in criteria_list}
+
+    # Send only the criteria text to the LLM — no point metadata needed there
+    llm_criteria = [{"criteria": c["criteria"]} for c in criteria_list]
+
     user_message = json.dumps({
-        "rubric_response": criteria_list,
+        "rubric_response": llm_criteria,
         "model_response": model_response
     }, indent=2)
 
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-opus-4-6",
         max_tokens=8192,
         system=RHEA_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}]
@@ -80,14 +102,25 @@ def evaluate_response(model_response: str, rubric_text: str) -> dict:
         if start != -1 and end > start:
             result = json.loads(response_text[start:end])
             evaluations = result.get("evaluations", [])
+
+            # Attach point values back to each evaluation result
+            for ev in evaluations:
+                ev["points"] = points_map.get(ev.get("criteria", ""), 0)
+
             total = len(evaluations)
             passed = sum(1 for e in evaluations if e.get("status") == "PASS")
             failed = total - passed
+            scored_points = sum(e["points"] for e in evaluations if e.get("status") == "PASS")
+            max_points = sum(c["points"] for c in criteria_list)
+
             result["summary"] = {
                 "total": total,
                 "passed": passed,
                 "failed": failed,
-                "pass_rate": round((passed / total * 100), 1) if total > 0 else 0
+                "pass_rate": round((passed / total * 100), 1) if total > 0 else 0,
+                "scored_points": scored_points,
+                "max_points": max_points,
+                "points_rate": round((scored_points / max_points * 100), 1) if max_points > 0 else 0
             }
             return result
     except json.JSONDecodeError:
@@ -95,6 +128,9 @@ def evaluate_response(model_response: str, rubric_text: str) -> dict:
 
     return {
         "evaluations": [],
-        "summary": {"total": 0, "passed": 0, "failed": 0, "pass_rate": 0},
+        "summary": {
+            "total": 0, "passed": 0, "failed": 0, "pass_rate": 0,
+            "scored_points": 0, "max_points": 0, "points_rate": 0
+        },
         "raw_response": response_text
     }

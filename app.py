@@ -9,7 +9,7 @@ from services.prompt_analyzer import analyze_prompt as _analyze_prompt
 from services.rubric_analyzer import analyze_rubrics as _analyze_rubrics
 from services.llm_runner import run_models as _run_models
 from services.rhea_evaluator import evaluate_response as _evaluate_response
-from services.pdf_generator import generate_response_pdf as _generate_pdf
+from services.pdf_generator import generate_response_pdf as _generate_pdf, generate_rhea_pdf as _generate_rhea_pdf
 
 load_dotenv()
 
@@ -225,6 +225,27 @@ def download_pdf():
         )
     except Exception as e:
         return jsonify({"error": f"PDF generation failed: {e}"}), 500
+
+
+@app.route("/api/rhea/pdf", methods=["POST"])
+def download_rhea_pdf():
+    data = request.get_json() or {}
+    rhea_results = data.get("rhea_results", {})
+
+    if not rhea_results:
+        return jsonify({"error": "No Rhea evaluation results provided."}), 400
+
+    try:
+        pdf_bytes = _generate_rhea_pdf(rhea_results)
+        from flask import Response
+        model_keys = "_".join(rhea_results.keys())[:40]
+        return Response(
+            pdf_bytes,
+            mimetype="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="rhea_{model_keys}.pdf"'},
+        )
+    except Exception as e:
+        return jsonify({"error": f"Rhea PDF generation failed: {e}"}), 500
 
 
 @app.route("/api/clear", methods=["POST"])

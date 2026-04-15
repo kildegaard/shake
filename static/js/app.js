@@ -191,6 +191,8 @@ async function clearAll() {
         document.getElementById('llm-results').innerHTML = '<div class="empty-state"><p>Select models and click "Run Selected Models" to generate responses.</p></div>';
         document.getElementById('rhea-results').innerHTML = '<div class="empty-state"><p>Run models in the "LLM Testing" tab first, then select a response to evaluate against rubrics.</p></div>';
         appState = { promptLoaded: false, rubricLoaded: false, contextFilesCount: 0, llmResponses: {}, rheaResults: {} };
+        const pdfBtn = document.getElementById('btn-rhea-pdf');
+        if (pdfBtn) pdfBtn.classList.add('hidden');
         // Reset tab state
         for (const k of Object.keys(llmRawResponses)) delete llmRawResponses[k];
         for (const k of Object.keys(mdToggleState)) delete mdToggleState[k];
@@ -753,62 +755,159 @@ function renderRheaResults() {
         return;
     }
 
-    const cols = entries.length;
-    const gridClass = cols === 1 ? 'grid-cols-1' : cols === 2 ? 'grid-cols-2' : 'grid-cols-3';
+    const isSingle = entries.length === 1;
 
-    let html = `<div class="grid ${gridClass} gap-4">`;
-
+    // ── Summary cards (one per model, always shown horizontally) ──────────
+    let html = '<div class="rhea-summary-row">';
     for (const [key, data] of entries) {
-        const summary = data.summary || { total: 0, passed: 0, failed: 0, pass_rate: 0 };
-        const passRateColor = summary.pass_rate > 60 ? 'text-red-600' : 'text-green-600';
+        const summary = data.summary || {};
+        const total = summary.total || 0;
+        const passed = summary.passed || 0;
+        const failed = summary.failed || 0;
+        const passRate = summary.pass_rate || 0;
+        const scored = summary.scored_points || 0;
+        const max = summary.max_points || 0;
+        const pointsRate = summary.points_rate || 0;
+        const passRateColor = passRate >= 80 ? 'text-green-600' : passRate >= 50 ? 'text-yellow-600' : 'text-red-600';
 
         html += `
-            <div class="result-card">
+            <div class="rhea-summary-card">
                 <div class="result-card-header">
-                    <h3 class="font-semibold text-gray-800">${data.model_name || key}</h3>
-                    <span class="${passRateColor} text-sm font-bold">${summary.pass_rate}% pass rate</span>
+                    <h3 class="font-semibold text-gray-800">${escapeHtml(data.model_name || key)}</h3>
+                    <span class="${passRateColor} text-sm font-bold">${passRate}% pass rate</span>
                 </div>
-                <div class="summary-bar !px-4 !py-3 mb-3">
+                <div class="rhea-stats-row">
                     <div class="summary-stat">
-                        <div class="value text-gray-800">${summary.total}</div>
+                        <div class="value text-gray-800">${total}</div>
                         <span class="label">Total</span>
                     </div>
                     <div class="summary-stat">
-                        <div class="value text-green-600">${summary.passed}</div>
+                        <div class="value text-green-600">${passed}</div>
                         <span class="label">Passed</span>
                     </div>
                     <div class="summary-stat">
-                        <div class="value text-red-600">${summary.failed}</div>
+                        <div class="value text-red-600">${failed}</div>
                         <span class="label">Failed</span>
                     </div>
+                    <div class="rhea-points-stat">
+                        <span class="rhea-points-value">${scored} / ${max} pts</span>
+                        <span class="rhea-points-pct">${pointsRate}%</span>
+                    </div>
                 </div>
+            </div>`;
+    }
+    html += '</div>';
+
+    // ── Evaluation table ───────────────────────────────────────────────────
+    if (isSingle) {
+        // Single model: Criteria | Pts | Status | Reason
+        const [key, data] = entries[0];
+        html += `
+            <div class="overflow-x-auto mt-4">
                 <table class="eval-table">
                     <thead>
                         <tr>
                             <th>Criteria</th>
-                            <th class="w-20">Status</th>
+                            <th class="rhea-th-pts">Pts</th>
+                            <th class="rhea-th-status">Status</th>
                             <th>Reason</th>
                         </tr>
                     </thead>
-                    <tbody>
-        `;
-
+                    <tbody>`;
         for (const ev of (data.evaluations || [])) {
             const badge = ev.status === 'PASS' ? 'badge-pass' : 'badge-fail';
             html += `
                 <tr>
                     <td class="text-gray-700">${escapeHtml(ev.criteria)}</td>
+                    <td class="text-center text-gray-500 text-xs font-medium">${ev.points ?? ''}</td>
                     <td><span class="${badge}">${ev.status}</span></td>
-                    <td class="text-gray-500 text-xs">${escapeHtml(ev.reason || '—')}</td>
-                </tr>
-            `;
+                    <td class="text-gray-500 text-xs rhea-reason-cell">${escapeHtml(ev.reason || '—')}</td>
+                </tr>`;
+        }
+        html += '</tbody></table></div>';
+    } else {
+        // Multi-model: unified table aligned by row index
+        // Columns: Criteria | Pts | [Model1 Status | Reason] | [Model2 Status | Reason] ...
+        const maxRows = Math.max(...entries.map(([, d]) => (d.evaluations || []).length));
+
+        html += '<div class="overflow-x-auto mt-4"><table class="eval-table rhea-multi-table"><thead><tr>';
+        html += '<th class="rhea-th-criteria">Criteria</th>';
+        html += '<th class="rhea-th-pts">Pts</th>';
+        for (const [, data] of entries) {
+            const name = escapeHtml(data.model_name || '');
+            html += `<th class="rhea-th-status">${name}</th><th class="rhea-th-reason">Reason</th>`;
+        }
+        html += '</tr></thead><tbody>';
+
+        for (let i = 0; i < maxRows; i++) {
+            // Use first model's criteria text as the shared criteria label
+            const firstEv = (entries[0][1].evaluations || [])[i];
+            const criteriaText = firstEv ? escapeHtml(firstEv.criteria) : '—';
+            const pts = firstEv ? (firstEv.points ?? '') : '';
+
+            html += `<tr>
+                <td class="text-gray-700 rhea-criteria-cell">${criteriaText}</td>
+                <td class="text-center text-gray-500 text-xs font-medium">${pts}</td>`;
+
+            for (const [, data] of entries) {
+                const ev = (data.evaluations || [])[i];
+                if (ev) {
+                    const badge = ev.status === 'PASS' ? 'badge-pass' : 'badge-fail';
+                    html += `<td class="text-center"><span class="${badge}">${ev.status}</span></td>
+                             <td class="text-gray-500 text-xs rhea-reason-cell">${escapeHtml(ev.reason || '—')}</td>`;
+                } else {
+                    html += '<td>—</td><td>—</td>';
+                }
+            }
+            html += '</tr>';
         }
 
         html += '</tbody></table></div>';
     }
 
-    html += '</div>';
     container.innerHTML = html;
+
+    // Show the PDF download button now that there are results
+    const pdfBtn = document.getElementById('btn-rhea-pdf');
+    if (pdfBtn) pdfBtn.classList.remove('hidden');
+}
+
+async function downloadRheaPDF() {
+    if (!appState.rheaResults || Object.keys(appState.rheaResults).length === 0) {
+        showToast('No Rhea results to export.', 'warn');
+        return;
+    }
+
+    const btn = document.getElementById('btn-rhea-pdf');
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+
+    try {
+        const res = await fetch('/api/rhea/pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rhea_results: appState.rheaResults })
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+        }
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'rhea_evaluation.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('PDF downloaded!', 'success');
+    } catch (e) {
+        showToast('PDF download failed: ' + e.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '⬇ PDF'; }
+    }
 }
 
 // ─── Utilities ───

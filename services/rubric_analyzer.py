@@ -1,8 +1,15 @@
 import anthropic
 import os
 import json
+import re
 
 SYSTEM_PROMPT = """You are an expert rubric evaluator for the Jupiter Shake crisis management task design project. Your job is to analyze rubrics written by an Expert and evaluate their quality against the official Rubric Design Guidelines.
+
+Each rubric is provided in the format:
+  [N] Criterion text describing what must be true
+  Source: SourceFile.ext
+
+Where [N] is the weight/score assigned to that rubric criterion, and Source indicates the reference document.
 
 Evaluate EACH rubric criterion individually against these 7 quality dimensions:
 
@@ -32,7 +39,7 @@ Return your analysis as JSON:
         {
           "dimension": "Atomic",
           "severity": "high",
-          "detail": "Contains 'and' combining two separate checks..."
+          "detail": "Uses 'and' — split into two criteria."
         }
       ],
       "quality": "pass|warn|fail"
@@ -41,11 +48,11 @@ Return your analysis as JSON:
   "coverage_gaps": [
     {
       "prompt_topic": "Topic from the prompt not covered",
-      "detail": "Explanation of what is missing..."
+      "detail": "No rubric checks this requirement."
     }
   ],
   "overall_quality": "good|acceptable|needs_work",
-  "overall_feedback": "Summary...",
+  "overall_feedback": "One or two sentence summary.",
   "stats": {
     "total_rubrics": 10,
     "pass": 7,
@@ -54,17 +61,47 @@ Return your analysis as JSON:
   }
 }
 
+IMPORTANT — keep ALL `detail` values SHORT: maximum 12 words each. Be direct and specific, no filler phrases.
 Be rigorous. A rubric that says 'Explains why X happens' should be flagged as non-binary. A rubric that says 'Mentions X and Y' should be flagged as non-atomic."""
+
+
+def _preprocess_rubric_text(raw_text: str) -> str:
+    """Normalize pasted rubric text into a clean format the LLM can parse.
+
+    Handles the common paste format from Google Docs tables:
+      [10] Identifies that plant-wide evacuation is immediately required.
+      Sources: Prompt Scenario
+    Lines may have inconsistent whitespace or blank lines between entries.
+    """
+    lines = raw_text.strip().splitlines()
+    cleaned = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            cleaned.append("")
+            continue
+        if re.match(r"^\[\d+\]", stripped):
+            cleaned.append(stripped)
+        elif re.match(r"^Sources?:", stripped, re.IGNORECASE):
+            cleaned.append(stripped)
+        else:
+            if cleaned and re.match(r"^\[\d+\]", cleaned[-1]):
+                cleaned[-1] += " " + stripped
+            else:
+                cleaned.append(stripped)
+    return "\n".join(cleaned)
 
 
 def analyze_rubrics(rubric_text: str, prompt_text: str) -> dict:
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-    user_message = f"## Prompt (for coverage gap analysis)\n\n{prompt_text}\n\n## Rubrics to Analyze\n\n{rubric_text}"
+    processed_rubrics = _preprocess_rubric_text(rubric_text)
+
+    user_message = f"## Prompt (for coverage gap analysis)\n\n{prompt_text}\n\n## Rubrics to Analyze\n\n{processed_rubrics}"
 
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=8192,
+        model="claude-sonnet-4-6",
+        max_tokens=16384,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}]
     )

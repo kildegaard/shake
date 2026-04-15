@@ -52,7 +52,7 @@ def analyze_prompt(prompt_text: str, context_files: list[dict] = None) -> dict:
             user_message += f"\n### File: {f['name']}\n{f['content'][:2000]}...\n" if len(f['content']) > 2000 else f"\n### File: {f['name']}\n{f['content']}\n"
 
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=4096,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}]

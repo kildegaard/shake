@@ -487,6 +487,73 @@
     display: block;
 }
 
+/* ── Rhea Evaluator ─────────────────────────────────────────────────────── */
+.rhea-summary-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+}
+.rhea-summary-card {
+    flex: 1;
+    min-width: 220px;
+    background: #f8f9fa;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 14px 18px;
+}
+.rhea-stats-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+.rhea-points-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    border-left: 1px solid #e5e7eb;
+    padding-left: 18px;
+    margin-left: 4px;
+}
+.rhea-points-value {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #1f2937;
+}
+.rhea-points-pct {
+    font-size: 0.72rem;
+    color: #6b7280;
+    margin-top: 2px;
+}
+
+/* Multi-model table column widths */
+.rhea-multi-table .rhea-th-criteria,
+.rhea-multi-table .rhea-criteria-cell {
+    min-width: 220px;
+    max-width: 280px;
+}
+.rhea-th-pts {
+    width: 42px;
+    text-align: center;
+}
+.rhea-th-status {
+    width: 90px;
+    text-align: center;
+}
+.rhea-th-reason {
+    min-width: 160px;
+    max-width: 220px;
+}
+.rhea-reason-cell {
+    min-width: 140px;
+    max-width: 220px;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.45;
+}
+
 /* Loading overlay */
 .loading-overlay {
     position: fixed;
