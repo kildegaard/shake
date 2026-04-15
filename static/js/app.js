@@ -1,0 +1,603 @@
+// ─── State ───
+let appState = {
+    promptLoaded: false,
+    rubricLoaded: false,
+    contextFilesCount: 0,
+    llmResponses: {},
+    rheaResults: {}
+};
+
+// ─── Tab Navigation ───
+function switchTab(tabId) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+
+    const target = document.getElementById('tab-' + tabId);
+    if (target) target.classList.add('active');
+
+    const btn = document.querySelector(`[data-tab="${tabId}"]`);
+    if (btn) btn.classList.add('active');
+}
+
+// ─── Loading Overlay ───
+function showLoading(text, subtext = '') {
+    document.getElementById('loading-text').textContent = text;
+    document.getElementById('loading-subtext').textContent = subtext;
+    document.getElementById('loading-overlay').style.display = 'flex';
+}
+
+function hideLoading() {
+    document.getElementById('loading-overlay').style.display = 'none';
+}
+
+// ─── Status Bar ───
+function updateStatus(data) {
+    const promptEl = document.getElementById('status-prompt');
+    const filesEl = document.getElementById('status-files');
+    const rubricsEl = document.getElementById('status-rubrics');
+
+    if (data.prompt_loaded) {
+        promptEl.textContent = `Prompt: ${data.prompt_length.toLocaleString()} chars`;
+        promptEl.className = 'status-pill status-loaded';
+        appState.promptLoaded = true;
+    } else {
+        promptEl.textContent = 'Prompt: Empty';
+        promptEl.className = 'status-pill status-empty';
+        appState.promptLoaded = false;
+    }
+
+    filesEl.textContent = `Files: ${data.context_files_count}`;
+    filesEl.className = data.context_files_count > 0 ? 'status-pill status-loaded' : 'status-pill status-empty';
+    appState.contextFilesCount = data.context_files_count;
+
+    if (data.rubric_loaded) {
+        rubricsEl.textContent = `Rubrics: ${data.rubric_length.toLocaleString()} chars`;
+        rubricsEl.className = 'status-pill status-loaded';
+        appState.rubricLoaded = true;
+    } else {
+        rubricsEl.textContent = 'Rubrics: Empty';
+        rubricsEl.className = 'status-pill status-empty';
+        appState.rubricLoaded = false;
+    }
+}
+
+// ─── File Handling ───
+function handlePromptFile(input) {
+    if (input.files.length > 0) {
+        const nameEl = document.getElementById('prompt-file-name');
+        nameEl.textContent = input.files[0].name;
+        nameEl.classList.remove('hidden');
+    }
+}
+
+function handleContextFiles(input) {
+    const list = document.getElementById('context-file-list');
+    list.innerHTML = '';
+    for (const f of input.files) {
+        const li = document.createElement('li');
+        li.className = 'flex items-center gap-2';
+        li.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-brand-500"></span> ${f.name}`;
+        list.appendChild(li);
+    }
+}
+
+function handleRubricFile(input) {
+    if (input.files.length > 0) {
+        const nameEl = document.getElementById('rubric-file-name');
+        nameEl.textContent = input.files[0].name;
+        nameEl.classList.remove('hidden');
+    }
+}
+
+// ─── Drag & Drop ───
+document.addEventListener('DOMContentLoaded', () => {
+    ['prompt-dropzone', 'context-dropzone', 'rubric-dropzone'].forEach(id => {
+        const zone = document.getElementById(id);
+        if (!zone) return;
+
+        zone.addEventListener('dragover', e => {
+            e.preventDefault();
+            zone.classList.add('dragover');
+        });
+        zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+        zone.addEventListener('drop', e => {
+            e.preventDefault();
+            zone.classList.remove('dragover');
+            const input = zone.querySelector('input[type="file"]');
+            if (input && e.dataTransfer.files.length > 0) {
+                input.files = e.dataTransfer.files;
+                input.dispatchEvent(new Event('change'));
+            }
+        });
+    });
+
+    fetchStatus();
+});
+
+// ─── Upload ───
+async function uploadAll() {
+    const formData = new FormData();
+
+    const promptText = document.getElementById('prompt-text').value.trim();
+    const rubricText = document.getElementById('rubric-text').value.trim();
+    const promptFile = document.getElementById('prompt-file').files[0];
+    const rubricFile = document.getElementById('rubric-file').files[0];
+    const contextFiles = document.getElementById('context-files').files;
+
+    if (promptText) formData.append('prompt_text', promptText);
+    if (rubricText) formData.append('rubric_text', rubricText);
+    if (promptFile) formData.append('prompt_file', promptFile);
+    if (rubricFile) formData.append('rubric_file', rubricFile);
+    for (const f of contextFiles) {
+        formData.append('context_files', f);
+    }
+
+    if (!promptText && !promptFile && contextFiles.length === 0 && !rubricText && !rubricFile) {
+        showToast('Please provide at least a prompt, context files, or rubrics.', 'warn');
+        return;
+    }
+
+    showLoading('Uploading & processing files...', 'Extracting text from documents');
+
+    try {
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        const data = await res.json();
+        updateStatus(data);
+        showToast('Materials uploaded successfully!', 'success');
+    } catch (e) {
+        showToast('Upload failed: ' + e.message, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function fetchStatus() {
+    try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        updateStatus(data);
+        if (data.llm_responses) {
+            appState.llmResponses = data.llm_responses;
+            updateRheaModelSelect();
+        }
+    } catch (e) {
+        // silent
+    }
+}
+
+// ─── Clear All ───
+async function clearAll() {
+    try {
+        await fetch('/api/clear', { method: 'POST' });
+        document.getElementById('prompt-text').value = '';
+        document.getElementById('rubric-text').value = '';
+        document.getElementById('prompt-file').value = '';
+        document.getElementById('rubric-file').value = '';
+        document.getElementById('context-files').value = '';
+        document.getElementById('context-file-list').innerHTML = '';
+        document.getElementById('prompt-file-name').classList.add('hidden');
+        document.getElementById('rubric-file-name').classList.add('hidden');
+        document.getElementById('prompt-analysis-results').innerHTML = '<div class="empty-state"><p>Upload a prompt and click "Analyze Prompt" to evaluate its quality.</p></div>';
+        document.getElementById('rubric-analysis-results').innerHTML = '<div class="empty-state"><p>Upload a prompt and rubrics, then click "Analyze Rubrics" to evaluate quality and coverage.</p></div>';
+        document.getElementById('llm-results').innerHTML = '<div class="empty-state"><p>Select models and click "Run Selected Models" to generate responses.</p></div>';
+        document.getElementById('rhea-results').innerHTML = '<div class="empty-state"><p>Run models in the "LLM Testing" tab first, then select a response to evaluate against rubrics.</p></div>';
+        appState = { promptLoaded: false, rubricLoaded: false, contextFilesCount: 0, llmResponses: {}, rheaResults: {} };
+        updateStatus({ prompt_loaded: false, prompt_length: 0, context_files_count: 0, rubric_loaded: false, rubric_length: 0 });
+        updateRheaModelSelect();
+        showToast('All data cleared.', 'success');
+    } catch (e) {
+        showToast('Clear failed: ' + e.message, 'error');
+    }
+}
+
+// ─── Prompt Analysis ───
+async function analyzePrompt() {
+    showLoading('Analyzing prompt quality...', 'Sending to Opus 4.6 for evaluation');
+
+    try {
+        const res = await fetch('/api/analyze/prompt', { method: 'POST' });
+        const data = await res.json();
+
+        if (data.error) {
+            showToast(data.error, 'error');
+            return;
+        }
+
+        renderPromptAnalysis(data);
+    } catch (e) {
+        showToast('Prompt analysis failed: ' + e.message, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+function renderPromptAnalysis(data) {
+    const container = document.getElementById('prompt-analysis-results');
+
+    const overallScore = data.overall_score || 0;
+    const scoreClass = `score-${Math.round(overallScore)}`;
+
+    let html = `
+        <div class="summary-bar">
+            <div class="summary-stat">
+                <div class="score-badge ${scoreClass}">${overallScore.toFixed(1)}</div>
+                <span class="label">Overall</span>
+            </div>
+            <div class="flex-1 text-sm text-gray-700">${data.overall_feedback || ''}</div>
+        </div>
+    `;
+
+    if (data.dimensions && data.dimensions.length > 0) {
+        html += '<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">';
+        for (const dim of data.dimensions) {
+            const sc = `score-${Math.round(dim.score)}`;
+            html += `
+                <div class="result-card">
+                    <div class="result-card-header">
+                        <span class="font-medium text-gray-800">${dim.name}</span>
+                        <span class="score-badge ${sc}">${dim.score}</span>
+                    </div>
+                    <p class="text-sm text-gray-600">${dim.feedback}</p>
+                </div>
+            `;
+        }
+        html += '</div>';
+    }
+
+    if (data.critical_issues && data.critical_issues.length > 0) {
+        html += `
+            <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+                <h4 class="text-sm font-semibold text-red-800 mb-2">Critical Issues</h4>
+                <ul class="list-disc list-inside text-sm text-red-700 space-y-1">
+                    ${data.critical_issues.map(i => `<li>${i}</li>`).join('')}
+                </ul>
+            </div>
+        `;
+    }
+
+    container.innerHTML = html;
+}
+
+// ─── Rubric Analysis ───
+async function analyzeRubrics() {
+    showLoading('Analyzing rubric quality...', 'Evaluating against 7 quality dimensions + coverage gaps');
+
+    try {
+        const res = await fetch('/api/analyze/rubrics', { method: 'POST' });
+        const data = await res.json();
+
+        if (data.error) {
+            showToast(data.error, 'error');
+            return;
+        }
+
+        renderRubricAnalysis(data);
+    } catch (e) {
+        showToast('Rubric analysis failed: ' + e.message, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+function renderRubricAnalysis(data) {
+    const container = document.getElementById('rubric-analysis-results');
+    const qualityClass = data.overall_quality === 'good' ? 'quality-good' :
+                          data.overall_quality === 'acceptable' ? 'quality-acceptable' : 'quality-needs-work';
+
+    let html = `
+        <div class="summary-bar">
+            <div class="summary-stat">
+                <div class="value ${qualityClass}">${(data.overall_quality || 'N/A').replace('_', ' ').toUpperCase()}</div>
+                <span class="label">Overall Quality</span>
+            </div>
+            ${data.stats ? `
+            <div class="summary-stat">
+                <div class="value text-green-600">${data.stats.pass}</div>
+                <span class="label">Pass</span>
+            </div>
+            <div class="summary-stat">
+                <div class="value text-yellow-600">${data.stats.warn}</div>
+                <span class="label">Warnings</span>
+            </div>
+            <div class="summary-stat">
+                <div class="value text-red-600">${data.stats.fail}</div>
+                <span class="label">Fail</span>
+            </div>
+            ` : ''}
+            <div class="flex-1 text-sm text-gray-700">${data.overall_feedback || ''}</div>
+        </div>
+    `;
+
+    if (data.rubric_evaluations && data.rubric_evaluations.length > 0) {
+        html += `
+            <div class="mb-6">
+                <h3 class="text-sm font-semibold text-gray-700 mb-3">Per-Rubric Evaluation</h3>
+                <table class="eval-table">
+                    <thead>
+                        <tr>
+                            <th class="w-12">#</th>
+                            <th>Criterion</th>
+                            <th class="w-24">Quality</th>
+                            <th>Issues</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        data.rubric_evaluations.forEach((rubric, idx) => {
+            const badge = rubric.quality === 'pass' ? 'badge-pass' :
+                          rubric.quality === 'warn' ? 'badge-warn' : 'badge-fail';
+            const issues = (rubric.issues || []).map(i =>
+                `<span class="text-xs"><strong>${i.dimension}</strong>: ${i.detail}</span>`
+            ).join('<br>');
+
+            html += `
+                <tr>
+                    <td class="text-gray-400">${idx + 1}</td>
+                    <td class="text-gray-800">${rubric.criterion}</td>
+                    <td><span class="${badge}">${rubric.quality.toUpperCase()}</span></td>
+                    <td class="text-gray-600">${issues || '—'}</td>
+                </tr>
+            `;
+        });
+        html += '</tbody></table></div>';
+    }
+
+    if (data.coverage_gaps && data.coverage_gaps.length > 0) {
+        html += `
+            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <h4 class="text-sm font-semibold text-yellow-800 mb-2">Coverage Gaps</h4>
+                <p class="text-xs text-yellow-600 mb-3">Topics found in the prompt but NOT covered by any rubric:</p>
+                <ul class="space-y-2">
+                    ${data.coverage_gaps.map(g => `
+                        <li class="text-sm">
+                            <strong class="text-yellow-800">${g.prompt_topic}</strong>
+                            <span class="text-yellow-700"> — ${g.detail}</span>
+                        </li>
+                    `).join('')}
+                </ul>
+            </div>
+        `;
+    }
+
+    container.innerHTML = html;
+}
+
+// ─── LLM Testing ───
+async function runLLMs() {
+    const models = [];
+    if (document.getElementById('model-gpt').checked) models.push('gpt');
+    if (document.getElementById('model-gemini').checked) models.push('gemini');
+    if (document.getElementById('model-opus').checked) models.push('opus');
+
+    if (models.length === 0) {
+        showToast('Please select at least one model.', 'warn');
+        return;
+    }
+
+    const modelNames = models.map(m => m === 'gpt' ? 'GPT 5.4' : m === 'gemini' ? 'Gemini 3.1 Pro' : 'Opus 4.6').join(', ');
+    showLoading(`Running ${models.length} model(s)...`, `Sending prompt to: ${modelNames}`);
+
+    try {
+        const res = await fetch('/api/llm/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ models })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            showToast(data.error, 'error');
+            return;
+        }
+
+        appState.llmResponses = {};
+        for (const r of data.results) {
+            const key = r.model.toLowerCase().replace(/ /g, '_').replace(/\./g, '');
+            appState.llmResponses[key] = r;
+        }
+
+        renderLLMResults(data.results);
+        updateRheaModelSelect();
+    } catch (e) {
+        showToast('LLM run failed: ' + e.message, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+function renderLLMResults(results) {
+    const container = document.getElementById('llm-results');
+    const cols = results.length;
+    const gridClass = cols === 1 ? 'grid-cols-1' : cols === 2 ? 'grid-cols-2' : 'grid-cols-3';
+
+    let html = `<div class="grid ${gridClass} gap-4">`;
+    for (const r of results) {
+        const statusBadge = r.status === 'success'
+            ? '<span class="badge-pass">Success</span>'
+            : `<span class="badge-fail">Error</span>`;
+
+        html += `
+            <div class="llm-response-col">
+                <h3 class="flex items-center justify-between">
+                    ${r.model}
+                    ${statusBadge}
+                </h3>
+                <div class="response-body">${r.status === 'success' ? escapeHtml(r.response) : `Error: ${escapeHtml(r.error || 'Unknown error')}`}</div>
+            </div>
+        `;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+// ─── Rhea Evaluator ───
+function updateRheaModelSelect() {
+    const select = document.getElementById('rhea-model-select');
+    select.innerHTML = '<option value="">Select a model response...</option>';
+    for (const [key, val] of Object.entries(appState.llmResponses)) {
+        if (val.status === 'success') {
+            select.innerHTML += `<option value="${key}">${val.model}</option>`;
+        }
+    }
+}
+
+async function runRhea() {
+    const modelKey = document.getElementById('rhea-model-select').value;
+    if (!modelKey) {
+        showToast('Please select a model response to evaluate.', 'warn');
+        return;
+    }
+
+    const modelName = appState.llmResponses[modelKey]?.model || modelKey;
+    showLoading('Running Rhea evaluation...', `Evaluating ${modelName} response against rubrics`);
+
+    try {
+        const res = await fetch('/api/rhea/evaluate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_key: modelKey })
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            showToast(data.error, 'error');
+            return;
+        }
+
+        appState.rheaResults[modelKey] = data;
+        renderRheaResults();
+    } catch (e) {
+        showToast('Rhea evaluation failed: ' + e.message, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function runRheaAll() {
+    const keys = Object.entries(appState.llmResponses)
+        .filter(([_, v]) => v.status === 'success')
+        .map(([k, _]) => k);
+
+    if (keys.length === 0) {
+        showToast('No model responses available. Run models first.', 'warn');
+        return;
+    }
+
+    showLoading('Running Rhea on all models...', `Evaluating ${keys.length} responses`);
+
+    try {
+        for (const key of keys) {
+            document.getElementById('loading-subtext').textContent =
+                `Evaluating ${appState.llmResponses[key].model}...`;
+
+            const res = await fetch('/api/rhea/evaluate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model_key: key })
+            });
+            const data = await res.json();
+
+            if (!data.error) {
+                appState.rheaResults[key] = data;
+            }
+        }
+        renderRheaResults();
+    } catch (e) {
+        showToast('Rhea evaluation failed: ' + e.message, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+function renderRheaResults() {
+    const container = document.getElementById('rhea-results');
+    const entries = Object.entries(appState.rheaResults);
+
+    if (entries.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>No evaluation results yet.</p></div>';
+        return;
+    }
+
+    const cols = entries.length;
+    const gridClass = cols === 1 ? 'grid-cols-1' : cols === 2 ? 'grid-cols-2' : 'grid-cols-3';
+
+    let html = `<div class="grid ${gridClass} gap-4">`;
+
+    for (const [key, data] of entries) {
+        const summary = data.summary || { total: 0, passed: 0, failed: 0, pass_rate: 0 };
+        const passRateColor = summary.pass_rate > 60 ? 'text-red-600' : 'text-green-600';
+
+        html += `
+            <div class="result-card">
+                <div class="result-card-header">
+                    <h3 class="font-semibold text-gray-800">${data.model_name || key}</h3>
+                    <span class="${passRateColor} text-sm font-bold">${summary.pass_rate}% pass rate</span>
+                </div>
+                <div class="summary-bar !px-4 !py-3 mb-3">
+                    <div class="summary-stat">
+                        <div class="value text-gray-800">${summary.total}</div>
+                        <span class="label">Total</span>
+                    </div>
+                    <div class="summary-stat">
+                        <div class="value text-green-600">${summary.passed}</div>
+                        <span class="label">Passed</span>
+                    </div>
+                    <div class="summary-stat">
+                        <div class="value text-red-600">${summary.failed}</div>
+                        <span class="label">Failed</span>
+                    </div>
+                </div>
+                <table class="eval-table">
+                    <thead>
+                        <tr>
+                            <th>Criteria</th>
+                            <th class="w-20">Status</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+
+        for (const ev of (data.evaluations || [])) {
+            const badge = ev.status === 'PASS' ? 'badge-pass' : 'badge-fail';
+            html += `
+                <tr>
+                    <td class="text-gray-700">${escapeHtml(ev.criteria)}</td>
+                    <td><span class="${badge}">${ev.status}</span></td>
+                    <td class="text-gray-500 text-xs">${escapeHtml(ev.reason || '—')}</td>
+                </tr>
+            `;
+        }
+
+        html += '</tbody></table></div>';
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+// ─── Utilities ───
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    const colors = {
+        success: 'bg-green-600',
+        error: 'bg-red-600',
+        warn: 'bg-yellow-500',
+        info: 'bg-brand-600'
+    };
+    toast.className = `fixed bottom-6 right-6 ${colors[type] || colors.info} text-white px-6 py-3 rounded-lg shadow-lg z-50 text-sm font-medium transition-all transform translate-y-0 opacity-100`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}

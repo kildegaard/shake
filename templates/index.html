@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shake Analyzer — Jupiter Shake</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0f4ff',
+                            100: '#dbe4ff',
+                            200: '#bac8ff',
+                            300: '#91a7ff',
+                            400: '#748ffc',
+                            500: '#5c7cfa',
+                            600: '#4c6ef5',
+                            700: '#4263eb',
+                            800: '#3b5bdb',
+                            900: '#364fc7',
+                        },
+                        surface: {
+                            50: '#f8f9fa',
+                            100: '#f1f3f5',
+                            200: '#e9ecef',
+                            300: '#dee2e6',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 shadow-sm">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 bg-brand-600 rounded-lg flex items-center justify-center">
+                    <span class="text-white font-bold text-lg">S</span>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold text-gray-900">Shake Analyzer</h1>
+                    <p class="text-xs text-gray-500">Jupiter Shake — Crisis Management Evaluation</p>
+                </div>
+            </div>
+            <div id="status-bar" class="flex items-center gap-4 text-sm">
+                <span id="status-prompt" class="status-pill status-empty">Prompt: Empty</span>
+                <span id="status-files" class="status-pill status-empty">Files: 0</span>
+                <span id="status-rubrics" class="status-pill status-empty">Rubrics: Empty</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-6">
+        <!-- Upload Panel -->
+        <section id="upload-panel" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-gray-800">Upload Materials</h2>
+                <button onclick="clearAll()" class="text-sm text-red-500 hover:text-red-700 transition">Clear All</button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Prompt -->
+                <div class="space-y-3">
+                    <label class="block text-sm font-medium text-gray-700">Prompt</label>
+                    <textarea id="prompt-text" rows="5" placeholder="Paste your crisis management prompt here..."
+                        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-transparent resize-none"></textarea>
+                    <div class="text-center text-xs text-gray-400">— or —</div>
+                    <label class="upload-dropzone" id="prompt-dropzone">
+                        <input type="file" id="prompt-file" accept=".txt,.md,.pdf,.docx" class="hidden" onchange="handlePromptFile(this)">
+                        <span class="text-sm text-gray-500">Drop file or click to upload</span>
+                        <span class="text-xs text-gray-400">.txt, .md, .pdf, .docx</span>
+                    </label>
+                    <div id="prompt-file-name" class="text-xs text-brand-600 hidden"></div>
+                </div>
+
+                <!-- Context Files -->
+                <div class="space-y-3">
+                    <label class="block text-sm font-medium text-gray-700">Context Files</label>
+                    <label class="upload-dropzone upload-dropzone-large" id="context-dropzone">
+                        <input type="file" id="context-files" multiple class="hidden" onchange="handleContextFiles(this)">
+                        <span class="text-sm text-gray-500">Drop files or click to upload</span>
+                        <span class="text-xs text-gray-400">Employee rosters, policies, org charts, etc.</span>
+                    </label>
+                    <ul id="context-file-list" class="space-y-1 text-xs text-gray-600"></ul>
+                </div>
+
+                <!-- Rubrics -->
+                <div class="space-y-3">
+                    <label class="block text-sm font-medium text-gray-700">Rubrics</label>
+                    <textarea id="rubric-text" rows="5" placeholder="Paste your rubric criteria here (one per line)..."
+                        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500 focus:border-transparent resize-none"></textarea>
+                    <div class="text-center text-xs text-gray-400">— or —</div>
+                    <label class="upload-dropzone" id="rubric-dropzone">
+                        <input type="file" id="rubric-file" accept=".txt,.md,.pdf,.docx,.csv" class="hidden" onchange="handleRubricFile(this)">
+                        <span class="text-sm text-gray-500">Drop file or click to upload</span>
+                        <span class="text-xs text-gray-400">.txt, .md, .pdf, .docx, .csv</span>
+                    </label>
+                    <div id="rubric-file-name" class="text-xs text-brand-600 hidden"></div>
+                </div>
+            </div>
+            <div class="mt-4 flex justify-end">
+                <button onclick="uploadAll()" class="btn-primary">Upload & Process</button>
+            </div>
+        </section>
+
+        <!-- Tabs -->
+        <div class="border-b border-gray-200 mb-6">
+            <nav class="flex gap-1" role="tablist">
+                <button class="tab-btn active" onclick="switchTab('prompt-analysis')" data-tab="prompt-analysis">Prompt Analysis</button>
+                <button class="tab-btn" onclick="switchTab('rubric-analysis')" data-tab="rubric-analysis">Rubric Analysis</button>
+                <button class="tab-btn" onclick="switchTab('llm-testing')" data-tab="llm-testing">LLM Testing</button>
+                <button class="tab-btn" onclick="switchTab('rhea-evaluator')" data-tab="rhea-evaluator">Rhea Evaluator</button>
+            </nav>
+        </div>
+
+        <!-- Tab 1: Prompt Analysis -->
+        <section id="tab-prompt-analysis" class="tab-content active">
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-lg font-semibold text-gray-800">Prompt Quality Analysis</h2>
+                        <p class="text-sm text-gray-500 mt-1">Evaluates your prompt against the Jupiter Shake Expert Instructions criteria using Opus 4.6</p>
+                    </div>
+                    <button onclick="analyzePrompt()" id="btn-analyze-prompt" class="btn-primary">Analyze Prompt</button>
+                </div>
+                <div id="prompt-analysis-results" class="mt-4">
+                    <div class="empty-state">
+                        <p>Upload a prompt and click "Analyze Prompt" to evaluate its quality.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab 2: Rubric Analysis -->
+        <section id="tab-rubric-analysis" class="tab-content">
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-lg font-semibold text-gray-800">Rubric Quality Analysis</h2>
+                        <p class="text-sm text-gray-500 mt-1">Evaluates rubrics against the Rubric Design Guidelines and checks coverage against the prompt</p>
+                    </div>
+                    <button onclick="analyzeRubrics()" id="btn-analyze-rubrics" class="btn-primary">Analyze Rubrics</button>
+                </div>
+                <div id="rubric-analysis-results" class="mt-4">
+                    <div class="empty-state">
+                        <p>Upload a prompt and rubrics, then click "Analyze Rubrics" to evaluate quality and coverage.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab 3: LLM Testing -->
+        <section id="tab-llm-testing" class="tab-content">
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-lg font-semibold text-gray-800">LLM Testing</h2>
+                        <p class="text-sm text-gray-500 mt-1">Run your prompt + context files against the three models and compare responses side by side</p>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center gap-3">
+                            <label class="flex items-center gap-2 text-sm cursor-pointer">
+                                <input type="checkbox" id="model-gpt" value="gpt" checked class="rounded border-gray-300 text-brand-600 focus:ring-brand-500">
+                                <span>GPT 5.4</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-sm cursor-pointer">
+                                <input type="checkbox" id="model-gemini" value="gemini" checked class="rounded border-gray-300 text-brand-600 focus:ring-brand-500">
+                                <span>Gemini 3.1 Pro</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-sm cursor-pointer">
+                                <input type="checkbox" id="model-opus" value="opus" checked class="rounded border-gray-300 text-brand-600 focus:ring-brand-500">
+                                <span>Opus 4.6</span>
+                            </label>
+                        </div>
+                        <button onclick="runLLMs()" id="btn-run-llms" class="btn-primary">Run Selected Models</button>
+                    </div>
+                </div>
+                <div id="llm-results" class="mt-4">
+                    <div class="empty-state">
+                        <p>Select models and click "Run Selected Models" to generate responses.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab 4: Rhea Evaluator -->
+        <section id="tab-rhea-evaluator" class="tab-content">
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-lg font-semibold text-gray-800">Rhea Evaluator</h2>
+                        <p class="text-sm text-gray-500 mt-1">Evaluate model responses against rubrics using the Rhea system (Opus 4.6)</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <select id="rhea-model-select" class="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-brand-500">
+                            <option value="">Select a model response...</option>
+                        </select>
+                        <button onclick="runRhea()" id="btn-run-rhea" class="btn-primary">Run Rhea Analysis</button>
+                        <button onclick="runRheaAll()" id="btn-run-rhea-all" class="btn-secondary">Evaluate All</button>
+                    </div>
+                </div>
+                <div id="rhea-results" class="mt-4">
+                    <div class="empty-state">
+                        <p>Run models in the "LLM Testing" tab first, then select a response to evaluate against rubrics.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay" style="display:none;">
+        <div class="loading-box">
+            <div class="spinner"></div>
+            <p id="loading-text" style="color:#374151;font-weight:500;">Processing...</p>
+            <p id="loading-subtext" style="font-size:0.875rem;color:#9ca3af;"></p>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
