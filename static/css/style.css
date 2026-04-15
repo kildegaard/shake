@@ -201,6 +201,15 @@
     max-height: 600px;
     overflow-y: auto;
 }
+.truncation-warning {
+    font-size: 0.75rem;
+    color: #92400e;
+    background: #fef3c7;
+    border: 1px solid #f59e0b;
+    border-radius: 6px;
+    padding: 6px 10px;
+    margin-bottom: 10px;
+}
 
 /* Quality indicator */
 .quality-good { color: #16a34a; }
