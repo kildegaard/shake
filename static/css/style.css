@@ -210,6 +210,26 @@
     padding: 6px 10px;
     margin-bottom: 10px;
 }
+.btn-download-pdf {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #4263eb;
+    background: #eef2ff;
+    border: 1px solid #c5d0ff;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    white-space: nowrap;
+}
+.btn-download-pdf:hover {
+    background: #4263eb;
+    color: #ffffff;
+    border-color: #4263eb;
+}
 
 /* Quality indicator */
 .quality-good { color: #16a34a; }

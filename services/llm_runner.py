@@ -8,10 +8,9 @@ import google.generativeai as genai
 # ~4 characters per token is a safe estimate for English text
 CHARS_PER_TOKEN = 4
 
-# GPT org TPM limit is 30,000; reserve 4,096 for output → ~25,904 input tokens max
-# We use 20,000 to stay comfortably under the limit
-GPT_MAX_INPUT_TOKENS = 20_000
-GPT_MAX_OUTPUT_TOKENS = 4_096
+# gpt-5.4 supports a 1M token context window
+GPT_MAX_INPUT_TOKENS = 500_000
+GPT_MAX_OUTPUT_TOKENS = 16_384
 GPT_MODEL = "gpt-5.4"
 
 

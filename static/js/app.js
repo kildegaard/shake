@@ -529,19 +529,66 @@ function renderLLMResults(results) {
             ? `<div class="truncation-warning">⚠️ ${escapeHtml(r.warning)}</div>`
             : '';
 
+        const safeModel = escapeHtml(r.model);
+        const safeKey = r.model.replace(/\s/g, '_').replace(/\./g, '');
+        const responseContent = r.status === 'success' ? escapeHtml(r.response) : `Error: ${escapeHtml(r.error || 'Unknown error')}`;
+
+        const downloadBtn = r.status === 'success'
+            ? `<button class="btn-download-pdf" onclick="downloadResponsePDF('${safeKey}')" title="Download as PDF">⬇ PDF</button>`
+            : '';
+
         html += `
             <div class="llm-response-col">
                 <h3 class="flex items-center justify-between">
-                    ${r.model}
-                    ${statusBadge}
+                    <span class="flex items-center gap-2">${safeModel} ${statusBadge}</span>
+                    ${downloadBtn}
                 </h3>
                 ${warningBanner}
-                <div class="response-body">${r.status === 'success' ? escapeHtml(r.response) : `Error: ${escapeHtml(r.error || 'Unknown error')}`}</div>
+                <div class="response-body" id="llm-body-${safeKey}">${responseContent}</div>
             </div>
         `;
     }
     html += '</div>';
     container.innerHTML = html;
+}
+
+function downloadResponsePDF(modelKey) {
+    const bodyEl = document.getElementById(`llm-body-${modelKey}`);
+    if (!bodyEl) return;
+
+    const modelName = modelKey.replace(/_/g, ' ');
+    const responseText = bodyEl.innerText || bodyEl.textContent;
+    const date = new Date().toLocaleString();
+
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>${modelName} — Response</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; color: #1f2937; padding: 48px; line-height: 1.7; font-size: 13px; }
+    header { border-bottom: 2px solid #4263eb; padding-bottom: 16px; margin-bottom: 24px; }
+    header h1 { font-size: 20px; font-weight: 700; color: #4263eb; }
+    header p { font-size: 11px; color: #6b7280; margin-top: 4px; }
+    .response { white-space: pre-wrap; word-break: break-word; }
+    @media print {
+      body { padding: 24px; }
+      button { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Shake Analyzer — ${modelName}</h1>
+    <p>Generated: ${date}</p>
+  </header>
+  <div class="response">${responseText}</div>
+  <script>window.onload = function(){ window.print(); }<\/script>
+</body>
+</html>`);
+    printWindow.document.close();
 }
 
 // ─── Rhea Evaluator ───
