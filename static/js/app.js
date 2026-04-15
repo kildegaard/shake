@@ -533,7 +533,7 @@ function renderLLMResults(results) {
             : '';
 
         const safeModel = escapeHtml(r.model);
-        const safeKey = r.model.replace(/\s/g, '_').replace(/\./g, '');
+        const safeKey = r.model.toLowerCase().replace(/\s/g, '_').replace(/\./g, '');
 
         if (r.status === 'success') {
             llmRawResponses[safeKey] = r.response || '';
