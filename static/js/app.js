@@ -10,6 +10,12 @@ let appState = {
 // Raw response text stored by modelKey for markdown toggle + PDF
 const llmRawResponses = {};
 
+// Markdown toggle state per model tab (true = rendered, false = raw)
+const mdToggleState = {};
+
+// Currently active model tab key
+let activeModelTab = null;
+
 // ─── Tab Navigation ───
 function switchTab(tabId) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -185,6 +191,10 @@ async function clearAll() {
         document.getElementById('llm-results').innerHTML = '<div class="empty-state"><p>Select models and click "Run Selected Models" to generate responses.</p></div>';
         document.getElementById('rhea-results').innerHTML = '<div class="empty-state"><p>Run models in the "LLM Testing" tab first, then select a response to evaluate against rubrics.</p></div>';
         appState = { promptLoaded: false, rubricLoaded: false, contextFilesCount: 0, llmResponses: {}, rheaResults: {} };
+        // Reset tab state
+        for (const k of Object.keys(llmRawResponses)) delete llmRawResponses[k];
+        for (const k of Object.keys(mdToggleState)) delete mdToggleState[k];
+        activeModelTab = null;
         updateStatus({ prompt_loaded: false, prompt_length: 0, context_files_count: 0, rubric_loaded: false, rubric_length: 0 });
         updateRheaModelSelect();
         showToast('All data cleared.', 'success');
@@ -502,13 +512,22 @@ async function runLLMs() {
             return;
         }
 
-        appState.llmResponses = {};
+        // Merge new results into accumulated state (don't reset existing tabs)
+        let firstNewKey = null;
         for (const r of data.results) {
             const key = r.model.toLowerCase().replace(/ /g, '_').replace(/\./g, '');
             appState.llmResponses[key] = r;
+            if (r.status === 'success') {
+                llmRawResponses[key] = r.response || '';
+                if (!(key in mdToggleState)) mdToggleState[key] = true;
+            }
+            if (!firstNewKey) firstNewKey = key;
         }
 
-        renderLLMResults(data.results);
+        // Switch to the first newly-run model tab
+        if (firstNewKey) activeModelTab = firstNewKey;
+
+        renderAllLLMTabs();
         updateRheaModelSelect();
     } catch (e) {
         showToast('LLM run failed: ' + e.message, 'error');
@@ -517,70 +536,97 @@ async function runLLMs() {
     }
 }
 
-function renderLLMResults(results) {
+// Preferred display order for model tabs
+const MODEL_ORDER = ['gpt_54', 'gemini_31_pro', 'opus_46'];
+
+function renderAllLLMTabs() {
     const container = document.getElementById('llm-results');
-    const cols = results.length;
-    const gridClass = cols === 1 ? 'grid-cols-1' : cols === 2 ? 'grid-cols-2' : 'grid-cols-3';
+    const keys = MODEL_ORDER.filter(k => k in appState.llmResponses);
 
-    let html = `<div class="grid ${gridClass} gap-4">`;
-    for (const r of results) {
-        const statusBadge = r.status === 'success'
-            ? '<span class="badge-pass">Success</span>'
-            : `<span class="badge-fail">Error</span>`;
-
-        const warningBanner = r.warning
-            ? `<div class="truncation-warning">⚠️ ${escapeHtml(r.warning)}</div>`
-            : '';
-
-        const safeModel = escapeHtml(r.model);
-        const safeKey = r.model.toLowerCase().replace(/\s/g, '_').replace(/\./g, '');
-
-        if (r.status === 'success') {
-            llmRawResponses[safeKey] = r.response || '';
-        }
-
-        const isSuccess = r.status === 'success';
-        const initialBody = isSuccess
-            ? marked.parse(r.response || '')
-            : `<span style="color:#991b1b">Error: ${escapeHtml(r.error || 'Unknown error')}</span>`;
-
-        const controls = isSuccess ? `
-            <span class="llm-card-controls">
-                <label class="md-toggle-label">
-                    <input type="checkbox" id="md-toggle-${safeKey}" checked onchange="toggleMarkdown('${safeKey}')">
-                    <span>Render MD</span>
-                </label>
-                <button class="btn-download-pdf" onclick="downloadResponsePDF('${safeKey}')" title="Download as PDF">⬇ PDF</button>
-            </span>` : '';
-
-        html += `
-            <div class="llm-response-col">
-                <h3 class="flex items-center justify-between">
-                    <span class="flex items-center gap-2">${safeModel} ${statusBadge}</span>
-                    ${controls}
-                </h3>
-                ${warningBanner}
-                <div class="response-body markdown-rendered" id="llm-body-${safeKey}">${initialBody}</div>
-            </div>
-        `;
+    if (keys.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>Select models and click "Run Selected Models" to generate responses.</p></div>';
+        return;
     }
-    html += '</div>';
-    container.innerHTML = html;
+
+    if (!activeModelTab || !keys.includes(activeModelTab)) {
+        activeModelTab = keys[0];
+    }
+
+    // ── Tab bar ──────────────────────────────────────────────────────────
+    let tabBarHtml = '<div class="llm-tab-bar">';
+    for (const key of keys) {
+        const r = appState.llmResponses[key];
+        const isActive = key === activeModelTab;
+        const dot = r.status === 'success'
+            ? '<span class="tab-dot tab-dot-ok"></span>'
+            : '<span class="tab-dot tab-dot-err"></span>';
+        tabBarHtml += `
+            <button class="llm-tab${isActive ? ' llm-tab-active' : ''}" onclick="switchModelTab('${key}')">
+                ${dot}${escapeHtml(r.model)}
+            </button>`;
+    }
+    tabBarHtml += '</div>';
+
+    // ── Active tab content ────────────────────────────────────────────────
+    const activeR = appState.llmResponses[activeModelTab];
+    const isSuccess = activeR.status === 'success';
+    const isRendered = mdToggleState[activeModelTab] !== false;
+
+    const warningBanner = activeR.warning
+        ? `<div class="truncation-warning">⚠️ ${escapeHtml(activeR.warning)}</div>`
+        : '';
+
+    let bodyContent;
+    if (isSuccess) {
+        bodyContent = isRendered
+            ? marked.parse(activeR.response || '')
+            : escapeHtml(activeR.response || '');
+    } else {
+        bodyContent = `<span style="color:#991b1b">Error: ${escapeHtml(activeR.error || 'Unknown error')}</span>`;
+    }
+
+    const toolbar = isSuccess ? `
+        <div class="llm-tab-toolbar">
+            <label class="md-toggle-label">
+                <input type="checkbox" id="md-toggle-active" ${isRendered ? 'checked' : ''}
+                    onchange="toggleMarkdown('${activeModelTab}')">
+                <span>Render MD</span>
+            </label>
+            <button class="btn-download-pdf" onclick="downloadResponsePDF('${activeModelTab}')">⬇ PDF</button>
+        </div>` : '';
+
+    const bodyClass = isSuccess
+        ? (isRendered ? 'response-body markdown-rendered' : 'response-body markdown-raw')
+        : 'response-body';
+
+    const contentHtml = `
+        <div class="llm-tab-panel">
+            ${toolbar}
+            ${warningBanner}
+            <div class="${bodyClass}" id="llm-body-active">${bodyContent}</div>
+        </div>`;
+
+    container.innerHTML = tabBarHtml + contentHtml;
+}
+
+function switchModelTab(key) {
+    activeModelTab = key;
+    renderAllLLMTabs();
 }
 
 function toggleMarkdown(modelKey) {
-    const checkbox = document.getElementById(`md-toggle-${modelKey}`);
-    const bodyEl = document.getElementById(`llm-body-${modelKey}`);
+    const checkbox = document.getElementById('md-toggle-active');
+    const bodyEl = document.getElementById('llm-body-active');
     const raw = llmRawResponses[modelKey] || '';
+
+    mdToggleState[modelKey] = checkbox.checked;
 
     if (checkbox.checked) {
         bodyEl.innerHTML = marked.parse(raw);
-        bodyEl.classList.add('markdown-rendered');
-        bodyEl.classList.remove('markdown-raw');
+        bodyEl.className = 'response-body markdown-rendered';
     } else {
         bodyEl.textContent = raw;
-        bodyEl.classList.remove('markdown-rendered');
-        bodyEl.classList.add('markdown-raw');
+        bodyEl.className = 'response-body markdown-raw';
     }
 }
 
