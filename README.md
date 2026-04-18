@@ -43,23 +43,24 @@ venv\Scripts\activate           # Windows
 pip install -r requirements.txt
 ```
 
-### 4. Configure environment variables
-
-Create a `.env` file in the project root:
-
-```env
-ANTHROPIC_API_KEY=your_anthropic_key_here
-OPENAI_API_KEY=your_openai_key_here
-GOOGLE_AI_API_KEY=your_google_ai_key_here
-```
-
-### 5. Run the app
+### 4. Run the app
 
 ```bash
 python app.py
 ```
 
 Then open your browser and go to [http://localhost:5000](http://localhost:5000).
+
+### 5. Configure your API keys
+
+No `.env` file needed. Once the app is running, click the **⚙ gear icon** in the top-right corner of the header to open the API Key Settings panel.
+
+Enter your keys for:
+- **Anthropic** — used by Prompt Analysis, Rubric Analysis, Rhea Evaluator, and Opus 4.6 in LLM Testing
+- **OpenAI** — used by GPT 5.4 in LLM Testing
+- **Google AI** — used by Gemini 3.1 Pro in LLM Testing
+
+Click **Save Keys** and they will be written to a local `.env` file on your machine. The dot on the gear icon turns green once all keys are configured. Keys are never sent anywhere — they live only on your machine.
 
 ## Project Structure
 
@@ -87,4 +88,5 @@ shake_analyzer/
 ## Notes
 
 - The `uploads/` folder is created automatically on first run and is excluded from version control.
+- API keys are saved locally via the in-app settings panel (gear icon in the header). The generated `.env` file is gitignored and never committed.
 - Make sure your API keys have sufficient quota before running batch evaluations.
