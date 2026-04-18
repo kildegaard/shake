@@ -1,5 +1,6 @@
-# Environment variables
+# Environment variables and secrets
 .env
+api_keys.md
 
 # Python
 __pycache__/
