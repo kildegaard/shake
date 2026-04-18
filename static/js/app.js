@@ -121,6 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     fetchStatus();
+    loadSettings();
 });
 
 // ─── Upload ───
@@ -1382,3 +1383,96 @@ function showToast(message, type = 'info') {
         setTimeout(() => toast.remove(), 300);
     }, 4000);
 }
+
+// ── Settings Modal ────────────────────────────────────────────────────────────
+
+function openSettingsModal() {
+    document.getElementById('settings-modal').style.display = 'flex';
+    loadSettings();
+}
+
+function closeSettingsModal() {
+    document.getElementById('settings-modal').style.display = 'none';
+    document.getElementById('key-anthropic').value = '';
+    document.getElementById('key-openai').value = '';
+    document.getElementById('key-google').value = '';
+}
+
+function handleSettingsOverlayClick(e) {
+    if (e.target === document.getElementById('settings-modal')) closeSettingsModal();
+}
+
+async function loadSettings() {
+    try {
+        const res = await fetch('/api/settings/keys');
+        const data = await res.json();
+        _applyKeyStatus('ind-anthropic', data.ANTHROPIC_API_KEY);
+        _applyKeyStatus('ind-openai',    data.OPENAI_API_KEY);
+        _applyKeyStatus('ind-google',    data.GOOGLE_AI_API_KEY);
+        _updateHeaderKeyIndicator(data);
+    } catch (_) {}
+}
+
+function _applyKeyStatus(badgeId, info) {
+    const badge = document.getElementById(badgeId);
+    if (!badge) return;
+    if (info && info.set) {
+        badge.textContent = info.masked || 'Set';
+        badge.classList.remove('settings-key-badge-missing');
+        badge.classList.add('settings-key-badge-ok');
+    } else {
+        badge.textContent = 'Not set';
+        badge.classList.remove('settings-key-badge-ok');
+        badge.classList.add('settings-key-badge-missing');
+    }
+}
+
+function _updateHeaderKeyIndicator(data) {
+    const dot = document.getElementById('settings-keys-indicator');
+    if (!dot) return;
+    const allSet = data.ANTHROPIC_API_KEY?.set && data.OPENAI_API_KEY?.set && data.GOOGLE_AI_API_KEY?.set;
+    const someSet = data.ANTHROPIC_API_KEY?.set || data.OPENAI_API_KEY?.set || data.GOOGLE_AI_API_KEY?.set;
+    dot.classList.remove('settings-keys-missing', 'settings-keys-partial', 'settings-keys-ok');
+    if (allSet) {
+        dot.classList.add('settings-keys-ok');
+        dot.title = 'All API keys configured';
+    } else if (someSet) {
+        dot.classList.add('settings-keys-partial');
+        dot.title = 'Some API keys missing';
+    } else {
+        dot.classList.add('settings-keys-missing');
+        dot.title = 'API keys not configured';
+    }
+}
+
+async function saveSettings() {
+    const payload = {
+        ANTHROPIC_API_KEY: document.getElementById('key-anthropic').value.trim(),
+        OPENAI_API_KEY:    document.getElementById('key-openai').value.trim(),
+        GOOGLE_AI_API_KEY: document.getElementById('key-google').value.trim(),
+    };
+
+    if (!payload.ANTHROPIC_API_KEY && !payload.OPENAI_API_KEY && !payload.GOOGLE_AI_API_KEY) {
+        showToast('Enter at least one API key to save.', 'warn');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/settings/keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            showToast(`Saved: ${data.updated.join(', ')}`, 'success');
+            closeSettingsModal();
+            loadSettings();
+        } else {
+            showToast('Failed to save keys.', 'error');
+        }
+    } catch (e) {
+        showToast('Error saving keys: ' + e.message, 'error');
+    }
+}
+

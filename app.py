@@ -20,6 +20,35 @@ from services.pdf_generator import (
 load_dotenv()
 
 app = Flask(__name__)
+
+ENV_PATH = os.path.join(os.path.dirname(__file__), ".env")
+_API_KEY_NAMES = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_AI_API_KEY"]
+
+
+def _read_env_file() -> dict:
+    env = {}
+    if os.path.exists(ENV_PATH):
+        with open(ENV_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    env[k.strip()] = v.strip()
+    return env
+
+
+def _write_env_file(env: dict):
+    lines = [f"{k}={v}" for k, v in env.items()]
+    with open(ENV_PATH, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _mask_key(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "•" * len(value)
+    return value[:4] + "•" * (len(value) - 8) + value[-4:]
 app.secret_key = os.urandom(24)
 app.config["UPLOAD_FOLDER"] = os.path.join(os.path.dirname(__file__), "uploads")
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB
@@ -296,6 +325,30 @@ def download_rhea_pdf():
         )
     except Exception as e:
         return jsonify({"error": f"Rhea PDF generation failed: {e}"}), 500
+
+
+@app.route("/api/settings/keys", methods=["GET"])
+def get_api_keys():
+    result = {}
+    for key in _API_KEY_NAMES:
+        value = os.environ.get(key, "")
+        result[key] = {"set": bool(value), "masked": _mask_key(value)}
+    return jsonify(result)
+
+
+@app.route("/api/settings/keys", methods=["POST"])
+def save_api_keys():
+    data = request.get_json() or {}
+    env = _read_env_file()
+    updated = []
+    for key in _API_KEY_NAMES:
+        value = data.get(key, "").strip()
+        if value:
+            env[key] = value
+            os.environ[key] = value
+            updated.append(key)
+    _write_env_file(env)
+    return jsonify({"status": "ok", "updated": updated})
 
 
 @app.route("/api/clear", methods=["POST"])
