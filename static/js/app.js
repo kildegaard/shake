@@ -192,6 +192,11 @@ async function clearAll() {
         document.getElementById('rubric-analysis-results').innerHTML = '<div class="empty-state"><p>Upload a prompt and rubrics, then click "Analyze Rubrics" to evaluate quality and coverage.</p></div>';
         document.getElementById('llm-results').innerHTML = '<div class="empty-state"><p>Select models and click "Run Selected Models" to generate responses.</p></div>';
         document.getElementById('rhea-results').innerHTML = '<div class="empty-state"><p>Run models in the "LLM Testing" tab first, then select a response to evaluate against rubrics.</p></div>';
+        const adv = document.getElementById('adversarial-results');
+        if (adv) {
+            adv.innerHTML = '<div class="empty-state"><p>Upload a prompt and rubrics, then run <strong>Analyze &amp; Harden</strong>. Optionally run Rhea first and check <strong>Include Rhea results</strong> to flag criteria all models passed.</p></div>';
+        }
+        adversarialLastHardened = '';
         appState = { promptLoaded: false, rubricLoaded: false, contextFilesCount: 0, llmResponses: {}, rheaResults: {} };
         const pdfBtn = document.getElementById('btn-rhea-pdf');
         if (pdfBtn) pdfBtn.classList.add('hidden');
@@ -289,6 +294,22 @@ function renderPromptAnalysis(data) {
                 <ul class="space-y-1">
                     ${data.critical_issues.map(i => `<li class="flex gap-2 text-sm text-red-700"><span class="mt-0.5 flex-shrink-0">✗</span>${i}</li>`).join('')}
                 </ul>
+            </div>`;
+    }
+
+    // ── Raw response (when system prompt didn't return JSON) ───────────────
+    if (data.raw_response) {
+        const rawId = 'raw-resp-' + Math.random().toString(36).slice(2);
+        html += `
+            <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#b45309" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        <span class="text-xs font-semibold text-amber-800">Raw model response (JSON parse failed — check active System Prompt)</span>
+                    </div>
+                    <button onclick="document.getElementById('${rawId}').classList.toggle('hidden')" class="text-xs text-amber-700 underline hover:text-amber-900">Show/Hide</button>
+                </div>
+                <pre id="${rawId}" class="hidden mt-2 text-xs text-amber-900 bg-amber-100 rounded p-2 whitespace-pre-wrap overflow-x-auto max-h-64 overflow-y-auto">${escapeHtml(data.raw_response)}</pre>
             </div>`;
     }
 
@@ -680,8 +701,7 @@ function toggleMarkdown(modelKey) {
 }
 
 async function downloadResponsePDF(modelKey) {
-    const checkbox = document.getElementById(`md-toggle-${modelKey}`);
-    const isRaw = !(checkbox && checkbox.checked);
+    const isRaw = mdToggleState[modelKey] === false;
 
     const btn = document.querySelector(`button[onclick="downloadResponsePDF('${modelKey}')"]`);
     if (btn) { btn.disabled = true; btn.textContent = '...'; }
@@ -954,6 +974,386 @@ async function downloadRheaPDF() {
         showToast('PDF download failed: ' + e.message, 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = '⬇ PDF'; }
+    }
+}
+
+// ─── Adversarial Lab ───
+let adversarialLastHardened = '';
+
+async function analyzeAdversarial() {
+    if (!appState.promptLoaded || !appState.rubricLoaded) {
+        showToast('Upload a prompt and rubrics first.', 'warn');
+        return;
+    }
+
+    const includeRhea = document.getElementById('adversarial-include-rhea')?.checked;
+    const body = {};
+    if (includeRhea && appState.rheaResults && Object.keys(appState.rheaResults).length > 0) {
+        body.rhea_results = appState.rheaResults;
+    } else if (includeRhea) {
+        showToast('No Rhea results in this session; analysis runs without them.', 'warn');
+    }
+
+    showLoading('Running Adversarial Lab...', 'Analyzing rubrics and prompt with Claude');
+
+    try {
+        const res = await fetch('/api/adversarial/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            showToast(data.error, 'error');
+            renderAdversarialError(data);
+            return;
+        }
+
+        adversarialLastHardened = data.hardened_rubrics || '';
+        renderAdversarialResults(data);
+        showToast('Adversarial analysis complete.', 'success');
+    } catch (e) {
+        showToast('Adversarial analysis failed: ' + e.message, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+function renderAdversarialError(data) {
+    const container = document.getElementById('adversarial-results');
+    if (!container) return;
+    let html = `<div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">${escapeHtml(data.error || 'Unknown error')}</div>`;
+    if (data.raw_response) {
+        html += `<pre class="mt-2 text-xs overflow-x-auto p-2 bg-gray-100 rounded max-h-96">${escapeHtml(String(data.raw_response).slice(0, 8000))}</pre>`;
+    }
+    container.innerHTML = html;
+}
+
+function renderAdversarialResults(data) {
+    const container = document.getElementById('adversarial-results');
+    if (!container) return;
+
+    const est = escapeHtml(data.estimated_fail_rate || '—');
+    const strategies = Array.isArray(data.strategies_used)
+        ? data.strategies_used.map(x =>
+            `<span class="inline-block mr-2 mb-1 px-2 py-0.5 rounded bg-gray-100 text-xs text-gray-700">${escapeHtml(String(x))}</span>`
+        ).join('')
+        : '';
+
+    let tooEasy = '';
+    if (Array.isArray(data.too_easy_criteria) && data.too_easy_criteria.length) {
+        tooEasy = '<table class="eval-table w-full mt-2"><thead><tr><th>Too easy</th><th>Reason</th></tr></thead><tbody>';
+        for (const row of data.too_easy_criteria) {
+            tooEasy += `<tr><td>${escapeHtml(row.criterion || '')}</td><td>${escapeHtml(row.reason || '')}</td></tr>`;
+        }
+        tooEasy += '</tbody></table>';
+    }
+
+    const mods = (data.prompt_modifications || []).map(m => `<li class="text-gray-700">${escapeHtml(m)}</li>`).join('');
+    const traps = (data.context_trap_ideas || []).map(m => `<li class="text-gray-700">${escapeHtml(m)}</li>`).join('');
+
+    const hardened = data.hardened_rubrics || '';
+
+    container.innerHTML = `
+<div class="space-y-6">
+  <div class="flex flex-wrap items-center gap-3">
+    <span class="text-sm font-semibold text-gray-600">Estimated fail rate (model guess):</span>
+    <span class="text-lg font-bold text-brand-700">${est}</span>
+  </div>
+  ${strategies ? `<div><span class="text-sm font-semibold text-gray-600">Strategies:</span><div class="mt-1">${strategies}</div></div>` : ''}
+  <div>
+    <h3 class="text-sm font-semibold text-gray-800 mb-2">Weakness analysis</h3>
+    <div class="text-sm text-gray-700 whitespace-pre-wrap border border-gray-100 rounded-lg p-3 bg-gray-50">${escapeHtml(data.weakness_analysis || '')}</div>
+  </div>
+  ${tooEasy ? `<div><h3 class="text-sm font-semibold text-gray-800 mb-1">Criteria that were too easy (with Rhea data)</h3>${tooEasy}</div>` : ''}
+  <div>
+    <h3 class="text-sm font-semibold text-gray-800 mb-2">Prompt modifications</h3>
+    <ul class="list-disc pl-5 space-y-1">${mods || '<li class="text-gray-400">—</li>'}</ul>
+  </div>
+  <div>
+    <h3 class="text-sm font-semibold text-gray-800 mb-2">Context trap ideas</h3>
+    <ul class="list-disc pl-5 space-y-1">${traps || '<li class="text-gray-400">—</li>'}</ul>
+  </div>
+  <div>
+    <h3 class="text-sm font-semibold text-gray-800 mb-2">Hardened rubrics</h3>
+    <p class="text-xs text-gray-500 mb-2">Edit below, then click &quot;Apply Hardened Rubrics&quot; to replace server rubrics.</p>
+    <textarea id="adversarial-hardened-textarea" rows="14"
+        class="w-full font-mono text-sm rounded-lg border border-gray-300 px-3 py-2 focus:ring-2 focus:ring-brand-500"></textarea>
+  </div>
+</div>`;
+
+    const ta = document.getElementById('adversarial-hardened-textarea');
+    if (ta) ta.value = hardened;
+}
+
+async function applyHardenedRubrics() {
+    const ta = document.getElementById('adversarial-hardened-textarea');
+    const text = ta ? ta.value.trim() : (adversarialLastHardened || '').trim();
+    if (!text) {
+        showToast('No hardened rubric text to apply. Run Analyze first.', 'warn');
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/adversarial/apply-rubrics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rubric_text: text })
+        });
+        const data = await res.json();
+        if (data.error) {
+            showToast(data.error, 'error');
+            return;
+        }
+        await fetchStatus();
+        showToast(`Rubrics updated (${data.rubric_count} items).`, 'success');
+    } catch (e) {
+        showToast('Apply failed: ' + e.message, 'error');
+    }
+}
+
+// ─── System Prompts Manager ───────────────────────────────────────────────────
+
+let spData = {};   // { service_key: { label, active_id, prompts[] } }
+let spExpandedService = null;
+
+async function loadSystemPrompts() {
+    try {
+        const res = await fetch('/api/system-prompts');
+        spData = await res.json();
+        renderSpServices();
+    } catch (e) {
+        document.getElementById('sp-services-list').innerHTML =
+            `<div class="empty-state"><p>Failed to load system prompts: ${e.message}</p></div>`;
+    }
+}
+
+function renderSpServices() {
+    const container = document.getElementById('sp-services-list');
+    if (!container) return;
+
+    const serviceOrder = ['prompt_analyzer', 'rubric_analyzer', 'rhea_evaluator', 'adversarial_engine', 'llm_runner'];
+    const keys = serviceOrder.filter(k => spData[k]);
+
+    container.innerHTML = keys.map(key => renderSpServiceBlock(key)).join('');
+}
+
+function renderSpServiceBlock(serviceKey) {
+    const svc = spData[serviceKey];
+    const isExpanded = spExpandedService === serviceKey;
+    const activePrompt = svc.prompts.find(p => p.id === svc.active_id) || svc.prompts[0];
+
+    const promptCards = svc.prompts.map(p => renderSpPromptCard(serviceKey, p, svc.active_id)).join('');
+
+    return `
+    <div class="sp-service-block" id="sp-block-${serviceKey}">
+        <div class="sp-service-header">
+            <div class="sp-service-title-group" onclick="spToggleService('${serviceKey}')" style="cursor:pointer;flex:1;min-width:0;">
+                <svg class="sp-chevron ${isExpanded ? 'sp-chevron-open' : ''}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                <span class="sp-service-label">${escapeHtml(svc.label)}</span>
+                <span class="sp-active-badge">
+                    <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="12" r="12"/></svg>
+                    ${escapeHtml(activePrompt ? activePrompt.name : '—')}
+                </span>
+            </div>
+            <div class="sp-service-actions">
+                <button class="sp-btn sp-btn-reset" onclick="spResetDefault('${serviceKey}')" title="Reset default to original">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.02"/></svg>
+                    Reset Default
+                </button>
+                <button class="sp-btn sp-btn-new" onclick="spOpenCreate('${serviceKey}')" title="Create new prompt">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    New Prompt
+                </button>
+            </div>
+        </div>
+        <div class="sp-service-body ${isExpanded ? 'sp-service-body-open' : ''}">
+            <div class="sp-prompt-list">${promptCards}</div>
+        </div>
+    </div>`;
+}
+
+function renderSpPromptCard(serviceKey, prompt, activeId) {
+    const isActive = prompt.id === activeId;
+    const isDefault = prompt.is_default;
+
+    return `
+    <div class="sp-prompt-card ${isActive ? 'sp-prompt-card-active' : ''}" id="sp-card-${serviceKey}-${prompt.id}">
+        <div class="sp-prompt-card-top">
+            <div class="sp-prompt-card-meta">
+                <span class="sp-prompt-name">${escapeHtml(prompt.name)}</span>
+                ${isDefault ? '<span class="sp-tag-default">Default</span>' : ''}
+                ${isActive ? '<span class="sp-tag-active">Active</span>' : ''}
+            </div>
+            <div class="sp-prompt-card-actions">
+                ${!isActive ? `<button class="sp-btn sp-btn-activate" onclick="spActivate('${serviceKey}', '${prompt.id}')">Set Active</button>` : ''}
+                <button class="sp-btn sp-btn-edit" onclick="spOpenEdit('${serviceKey}', '${prompt.id}')">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    Edit
+                </button>
+                ${!isDefault ? `<button class="sp-btn sp-btn-delete" onclick="spDelete('${serviceKey}', '${prompt.id}')">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                    Delete
+                </button>` : ''}
+            </div>
+        </div>
+        <pre class="sp-prompt-preview">${escapeHtml(prompt.content.slice(0, 220))}${prompt.content.length > 220 ? '…' : ''}</pre>
+    </div>`;
+}
+
+function spToggleService(serviceKey) {
+    spExpandedService = spExpandedService === serviceKey ? null : serviceKey;
+    renderSpServices();
+}
+
+// ── Activate ──
+async function spActivate(serviceKey, promptId) {
+    try {
+        const res = await fetch(`/api/system-prompts/${serviceKey}/${promptId}/activate`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed');
+        spData[serviceKey].active_id = promptId;
+        renderSpServices();
+        showToast('Prompt set as active.', 'success');
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+// ── Reset default ──
+async function spResetDefault(serviceKey) {
+    if (!confirm(`Reset the Default prompt for "${spData[serviceKey]?.label}" to the original built-in version?`)) return;
+    try {
+        const res = await fetch(`/api/system-prompts/${serviceKey}/reset-default`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed');
+        await loadSystemPrompts();
+        showToast('Default prompt restored.', 'success');
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+// ── Delete ──
+async function spDelete(serviceKey, promptId) {
+    const svc = spData[serviceKey];
+    const prompt = svc.prompts.find(p => p.id === promptId);
+    if (!confirm(`Delete "${prompt?.name}"? This cannot be undone.`)) return;
+    try {
+        const res = await fetch(`/api/system-prompts/${serviceKey}/${promptId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed');
+        svc.prompts = svc.prompts.filter(p => p.id !== promptId);
+        if (svc.active_id === promptId) svc.active_id = 'default';
+        renderSpServices();
+        showToast('Prompt deleted.', 'success');
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    }
+}
+
+// ── Modal: open create ──
+function spOpenCreate(serviceKey) {
+    spExpandedService = serviceKey;
+    document.getElementById('sp-modal-title').textContent = `New Prompt — ${spData[serviceKey]?.label}`;
+    document.getElementById('sp-modal-service').value = serviceKey;
+    document.getElementById('sp-modal-prompt-id').value = '';
+    document.getElementById('sp-modal-name').value = '';
+    document.getElementById('sp-modal-content').value = '';
+    document.getElementById('sp-modal-name-row').style.display = '';
+    document.getElementById('sp-modal-save-btn').textContent = 'Create';
+    document.getElementById('sp-modal').style.display = 'flex';
+    setTimeout(() => document.getElementById('sp-modal-name').focus(), 50);
+}
+
+// ── Modal: open edit ──
+function spOpenEdit(serviceKey, promptId) {
+    spExpandedService = serviceKey;
+    const svc = spData[serviceKey];
+    const prompt = svc.prompts.find(p => p.id === promptId);
+    if (!prompt) return;
+
+    document.getElementById('sp-modal-title').textContent = `Edit — ${prompt.name}`;
+    document.getElementById('sp-modal-service').value = serviceKey;
+    document.getElementById('sp-modal-prompt-id').value = promptId;
+    document.getElementById('sp-modal-content').value = prompt.content;
+    document.getElementById('sp-modal-save-btn').textContent = 'Save';
+
+    // Hide name field for default prompt (can't rename)
+    if (prompt.is_default) {
+        document.getElementById('sp-modal-name-row').style.display = 'none';
+        document.getElementById('sp-modal-name').value = '';
+    } else {
+        document.getElementById('sp-modal-name-row').style.display = '';
+        document.getElementById('sp-modal-name').value = prompt.name;
+    }
+
+    document.getElementById('sp-modal').style.display = 'flex';
+    setTimeout(() => document.getElementById('sp-modal-content').focus(), 50);
+}
+
+function spCloseModal() {
+    document.getElementById('sp-modal').style.display = 'none';
+}
+
+function spModalBackdropClick(e) {
+    if (e.target === document.getElementById('sp-modal')) spCloseModal();
+}
+
+// ── Modal: save ──
+async function spSaveModal() {
+    const serviceKey = document.getElementById('sp-modal-service').value;
+    const promptId = document.getElementById('sp-modal-prompt-id').value;
+    const name = document.getElementById('sp-modal-name').value.trim();
+    const content = document.getElementById('sp-modal-content').value;
+    const isCreate = !promptId;
+
+    if (isCreate && !name) {
+        showToast('Please enter a name for the new prompt.', 'warn');
+        return;
+    }
+
+    const btn = document.getElementById('sp-modal-save-btn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    try {
+        let res, data;
+        if (isCreate) {
+            res = await fetch(`/api/system-prompts/${serviceKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, content })
+            });
+            data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to create');
+            spData[serviceKey].prompts.push(data);
+        } else {
+            const svc = spData[serviceKey];
+            const isDefault = svc.prompts.find(p => p.id === promptId)?.is_default;
+            const body = { content };
+            if (!isDefault && name) body.name = name;
+
+            res = await fetch(`/api/system-prompts/${serviceKey}/${promptId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to update');
+            const idx = svc.prompts.findIndex(p => p.id === promptId);
+            if (idx >= 0) svc.prompts[idx] = { ...svc.prompts[idx], ...data };
+        }
+
+        spCloseModal();
+        renderSpServices();
+        showToast(isCreate ? 'Prompt created!' : 'Prompt saved!', 'success');
+    } catch (e) {
+        showToast('Error: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = isCreate ? 'Create' : 'Save';
     }
 }
 
