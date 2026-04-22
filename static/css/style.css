@@ -931,6 +931,60 @@
     font-weight: 700;
 }
 
+/* Individual detail blocks (one per model, expanded) */
+.rhea-detail-block {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 18px;
+}
+.rhea-detail-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #e5e7eb;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.rhea-detail-block-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.rhea-detail-block-meta {
+    font-size: 0.75rem;
+    color: #9ca3af;
+}
+.rhea-detail-block-stats {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.rhea-detail-delete-btn {
+    margin-left: 8px;
+    font-size: 0.8rem;
+    color: #9ca3af;
+    background: transparent;
+    border: 1px solid #e5e7eb;
+    border-radius: 50%;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    line-height: 1;
+}
+.rhea-detail-delete-btn:hover {
+    background: #fee2e2;
+    color: #dc2626;
+    border-color: #fca5a5;
+}
+
 /* Multi-model table column widths */
 .rhea-multi-table .rhea-th-criteria,
 .rhea-multi-table .rhea-criteria-cell {
