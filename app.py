@@ -581,5 +581,71 @@ def clear_context_file(filename):
     return jsonify(_status_payload())
 
 
+# ─── System Prompts Routes ────────────────────────────────────────────────────
+
+import services.system_prompts_store as _sp_store
+
+
+@app.route("/api/system-prompts", methods=["GET"])
+def sp_get_all():
+    return jsonify(_sp_store.get_all())
+
+
+@app.route("/api/system-prompts/<service_key>", methods=["POST"])
+def sp_create(service_key):
+    body = request.get_json(force=True)
+    name = (body.get("name") or "").strip()
+    content = body.get("content", "")
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+    try:
+        prompt = _sp_store.create_prompt(service_key, name, content)
+        return jsonify(prompt), 201
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/system-prompts/<service_key>/<prompt_id>", methods=["PUT"])
+def sp_update(service_key, prompt_id):
+    body = request.get_json(force=True)
+    try:
+        prompt = _sp_store.update_prompt(
+            service_key,
+            prompt_id,
+            name=body.get("name"),
+            content=body.get("content"),
+        )
+        return jsonify(prompt)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/system-prompts/<service_key>/<prompt_id>", methods=["DELETE"])
+def sp_delete(service_key, prompt_id):
+    try:
+        _sp_store.delete_prompt(service_key, prompt_id)
+        return jsonify({"status": "deleted"})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/system-prompts/<service_key>/<prompt_id>/activate", methods=["POST"])
+def sp_activate(service_key, prompt_id):
+    try:
+        _sp_store.activate_prompt(service_key, prompt_id)
+        return jsonify({"status": "activated"})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/system-prompts/<service_key>/reset-default", methods=["POST"])
+def sp_reset_default(service_key):
+    try:
+        _sp_store.reset_to_default(service_key)
+        return jsonify({"status": "reset"})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000, use_reloader=True, reloader_type="stat")
