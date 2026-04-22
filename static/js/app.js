@@ -16,6 +16,160 @@ const mdToggleState = {};
 // Currently active model tab key
 let activeModelTab = null;
 
+// ─── Materials Preview ───
+function toggleMaterialsPreview() {
+    const content = document.getElementById('materials-preview-content');
+    const chevron = document.getElementById('preview-chevron');
+    const isHidden = content.classList.contains('hidden');
+    content.classList.toggle('hidden', !isHidden);
+    chevron.style.transform = isHidden ? 'rotate(180deg)' : '';
+}
+
+function switchPreviewTab(tabId) {
+    document.querySelectorAll('.preview-tab-content').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('.preview-tab-btn').forEach(btn => btn.classList.remove('active'));
+    const target = document.getElementById('preview-tab-' + tabId);
+    if (target) target.classList.remove('hidden');
+    const btn = document.querySelector(`[data-preview-tab="${tabId}"]`);
+    if (btn) btn.classList.add('active');
+}
+
+function renderPromptPreview(promptText) {
+    const container = document.getElementById('preview-tab-prompt');
+    if (!container) return;
+    if (!promptText || !promptText.trim()) {
+        container.innerHTML = `<div class="empty-state"><p>Upload a prompt to preview it here.</p></div>`;
+        return;
+    }
+    const rendered = (typeof marked !== 'undefined')
+        ? marked.parse(promptText)
+        : `<pre class="whitespace-pre-wrap text-sm text-gray-800">${escapeHtml(promptText)}</pre>`;
+    container.innerHTML = `
+        <div class="flex justify-end mb-3">
+            <button onclick="deletePrompt()" class="delete-btn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                Remove Prompt
+            </button>
+        </div>
+        <div class="prose prose-sm max-w-none text-gray-800 leading-relaxed">${rendered}</div>`;
+}
+
+function renderContextFilesPreview(fileNames) {
+    const container = document.getElementById('preview-context-container');
+    const badge = document.getElementById('preview-context-badge');
+    if (!container) return;
+    if (!fileNames || fileNames.length === 0) {
+        container.innerHTML = `<div class="empty-state"><p>Upload context files to see them listed here.</p></div>`;
+        if (badge) badge.classList.add('hidden');
+        return;
+    }
+    if (badge) {
+        badge.textContent = fileNames.length;
+        badge.classList.remove('hidden');
+    }
+    const items = fileNames.map(name => `
+        <li class="flex items-center gap-2 py-2.5 border-b border-gray-100 last:border-0 group">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand-400 flex-shrink-0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span class="text-sm text-gray-700 flex-1">${escapeHtml(name)}</span>
+            <button onclick="deleteContextFile('${escapeHtml(name).replace(/'/g, "\\'")}')" title="Remove file"
+                class="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </li>
+    `).join('');
+    container.innerHTML = `
+        <div class="flex justify-end mb-3">
+            <button onclick="deleteAllContext()" class="delete-btn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                Remove All Files
+            </button>
+        </div>
+        <ul>${items}</ul>
+        <p class="text-xs text-gray-400 mt-3 text-right">${fileNames.length} file${fileNames.length !== 1 ? 's' : ''} loaded</p>`;
+}
+
+// ─── Rubrics Table ───
+function parseRubrics(text) {
+    if (!text || !text.trim()) return [];
+
+    const lines = text.split('\n');
+    const rubrics = [];
+    let current = null;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+
+        const match = line.match(/^\[(-?\d+)\]\s*(.*)/);
+        if (match) {
+            if (current) rubrics.push(current);
+            current = { id: match[1], criterion: match[2].trim(), source: '' };
+        } else if (current && /^source\s*:/i.test(line)) {
+            current.source = line.replace(/^source\s*:\s*/i, '').trim();
+        } else if (current && !current.source) {
+            current.criterion += ' ' + line;
+        }
+    }
+    if (current) rubrics.push(current);
+    return rubrics;
+}
+
+function renderRubricsTable(rubricText) {
+    const container = document.getElementById('preview-rubrics-container');
+    const badge = document.getElementById('preview-rubrics-badge');
+    if (!container) return;
+
+    const rubrics = parseRubrics(rubricText);
+
+    if (rubrics.length === 0) {
+        container.innerHTML = `<div class="empty-state"><p>Upload rubrics to verify the registered criteria here.</p></div>`;
+        if (badge) badge.classList.add('hidden');
+        return;
+    }
+
+    if (badge) {
+        badge.textContent = rubrics.length;
+        badge.classList.remove('hidden');
+    }
+
+    const rows = rubrics.map((r, idx) => {
+        const isNegative = parseInt(r.id, 10) < 0;
+        const idBadge = isNegative
+            ? `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold font-mono bg-red-50 text-red-600 border border-red-200">[${r.id}]</span>`
+            : `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold font-mono bg-emerald-50 text-emerald-700 border border-emerald-200">[${r.id}]</span>`;
+        return `
+        <tr class="${idx % 2 === 0 ? '' : 'bg-gray-50'}">
+            <td class="px-4 py-3 text-center text-sm text-gray-400 font-mono">${idx + 1}</td>
+            <td class="px-4 py-3 text-center">${idBadge}</td>
+            <td class="px-4 py-3 text-sm text-gray-800 leading-relaxed">${escapeHtml(r.criterion)}</td>
+            <td class="px-4 py-3 text-sm text-gray-400 italic">${r.source ? escapeHtml(r.source) : '<span class="text-gray-300">—</span>'}</td>
+        </tr>`;
+    }).join('');
+
+    container.innerHTML = `
+        <div class="flex justify-end mb-3">
+            <button onclick="deleteRubrics()" class="delete-btn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+                Remove Rubrics
+            </button>
+        </div>
+        <div class="overflow-x-auto rounded-lg border border-gray-200">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-gray-50 border-b border-gray-200">
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-12 text-center">No.</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-16 text-center">ID</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Criterion</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-44">Source</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+        <p class="text-xs text-gray-400 mt-3 text-right">Showing ${rubrics.length} rubric${rubrics.length !== 1 ? 's' : ''}</p>
+    `;
+}
+
 // ─── Tab Navigation ───
 function switchTab(tabId) {
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -68,6 +222,20 @@ function updateStatus(data) {
         rubricsEl.textContent = 'Rubrics: Empty';
         rubricsEl.className = 'status-pill status-empty';
         appState.rubricLoaded = false;
+    }
+
+    renderPromptPreview(data.prompt_text || '');
+    renderRubricsTable(data.rubric_text || '');
+    renderContextFilesPreview(data.context_file_names || []);
+
+    // Update header badges in the collapsible toggle button
+    const headerBadges = document.getElementById('preview-header-badges');
+    if (headerBadges) {
+        const parts = [];
+        if (data.prompt_loaded) parts.push(`<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-brand-100 text-brand-700">Prompt</span>`);
+        if (data.context_files_count > 0) parts.push(`<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-brand-100 text-brand-700">${data.context_files_count} file${data.context_files_count !== 1 ? 's' : ''}</span>`);
+        if (data.rubric_loaded) parts.push(`<span class="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">${data.rubric_count} rubric${data.rubric_count !== 1 ? 's' : ''}</span>`);
+        headerBadges.innerHTML = parts.join('');
     }
 }
 
@@ -153,11 +321,72 @@ async function uploadAll() {
         const res = await fetch('/api/upload', { method: 'POST', body: formData });
         const data = await res.json();
         updateStatus(data);
+        clearUploadInputs();
         showToast('Materials uploaded successfully!', 'success');
     } catch (e) {
         showToast('Upload failed: ' + e.message, 'error');
     } finally {
         hideLoading();
+    }
+}
+
+function clearUploadInputs() {
+    document.getElementById('prompt-text').value = '';
+    document.getElementById('rubric-text').value = '';
+    ['prompt-file', 'rubric-file', 'context-files'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    const promptTag = document.getElementById('prompt-file-name');
+    if (promptTag) { promptTag.textContent = ''; promptTag.className = 'upload-file-tag hidden'; }
+    const rubricTag = document.getElementById('rubric-file-name');
+    if (rubricTag) { rubricTag.textContent = ''; rubricTag.className = 'upload-file-tag hidden'; }
+    const contextList = document.getElementById('context-file-list');
+    if (contextList) contextList.innerHTML = '';
+}
+
+// ─── Selective Delete ───
+async function deletePrompt() {
+    try {
+        const res = await fetch('/api/clear/prompt', { method: 'DELETE' });
+        const data = await res.json();
+        updateStatus(data);
+        showToast('Prompt removed.', 'success');
+    } catch (e) {
+        showToast('Failed to remove prompt: ' + e.message, 'error');
+    }
+}
+
+async function deleteRubrics() {
+    try {
+        const res = await fetch('/api/clear/rubrics', { method: 'DELETE' });
+        const data = await res.json();
+        updateStatus(data);
+        showToast('Rubrics removed.', 'success');
+    } catch (e) {
+        showToast('Failed to remove rubrics: ' + e.message, 'error');
+    }
+}
+
+async function deleteAllContext() {
+    try {
+        const res = await fetch('/api/clear/context', { method: 'DELETE' });
+        const data = await res.json();
+        updateStatus(data);
+        showToast('All context files removed.', 'success');
+    } catch (e) {
+        showToast('Failed to remove context files: ' + e.message, 'error');
+    }
+}
+
+async function deleteContextFile(filename) {
+    try {
+        const res = await fetch(`/api/clear/context/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+        const data = await res.json();
+        updateStatus(data);
+        showToast(`"${filename}" removed.`, 'success');
+    } catch (e) {
+        showToast('Failed to remove file: ' + e.message, 'error');
     }
 }
 
@@ -832,22 +1061,33 @@ function renderRheaResults() {
         const total = summary.total || 0;
         const passed = summary.passed || 0;
         const failed = summary.failed || 0;
-        const passRate = summary.pass_rate || 0;
-        const scored = summary.scored_points || 0;
-        const max = summary.max_points || 0;
-        const pointsRate = summary.points_rate || 0;
-        const passRateColor = passRate >= 80 ? 'text-green-600' : passRate >= 50 ? 'text-yellow-600' : 'text-red-600';
+        const passRate     = summary.pass_rate     || 0;
+        const scored       = summary.scored_points  ?? 0;
+        const max          = summary.max_points     || 0;
+        const pointsRate   = summary.points_rate    ?? 0;
+        const penaltyPts   = summary.penalty_points ?? 0;
+        const penaltyMax   = summary.penalty_max    ?? 0;
+
+        const primaryRate  = max > 0 ? pointsRate : passRate;
+        const primaryColor = primaryRate >= 80 ? 'text-green-600' : primaryRate >= 50 ? 'text-yellow-600' : 'text-red-600';
+
+        const penaltyBadge = penaltyPts < 0
+            ? `<span class="rhea-penalty-badge" title="Penalties from failed negative rubrics">${penaltyPts} pts penalty</span>`
+            : '';
 
         html += `
             <div class="rhea-summary-card">
                 <div class="result-card-header">
                     <h3 class="font-semibold text-gray-800">${escapeHtml(data.model_name || key)}</h3>
-                    <span class="${passRateColor} text-sm font-bold">${passRate}% pass rate</span>
+                    <div class="flex items-center gap-2">
+                        ${penaltyBadge}
+                        <span class="${primaryColor} text-sm font-bold">${primaryRate}% score</span>
+                    </div>
                 </div>
                 <div class="rhea-stats-row">
                     <div class="summary-stat">
                         <div class="value text-gray-800">${total}</div>
-                        <span class="label">Total</span>
+                        <span class="label">Criteria</span>
                     </div>
                     <div class="summary-stat">
                         <div class="value text-green-600">${passed}</div>
@@ -858,8 +1098,8 @@ function renderRheaResults() {
                         <span class="label">Failed</span>
                     </div>
                     <div class="rhea-points-stat">
-                        <span class="rhea-points-value">${scored} / ${max} pts</span>
-                        <span class="rhea-points-pct">${pointsRate}%</span>
+                        <span class="rhea-points-value" title="Max achievable: ${max} pts${penaltyMax < 0 ? ' | Max penalty: ' + penaltyMax + ' pts' : ''}">${scored} / ${max} pts</span>
+                        <span class="rhea-points-pct" title="Criteria count pass rate: ${passRate}%">${pointsRate}%</span>
                     </div>
                 </div>
             </div>`;
@@ -884,10 +1124,19 @@ function renderRheaResults() {
                     <tbody>`;
         for (const ev of (data.evaluations || [])) {
             const badge = ev.status === 'PASS' ? 'badge-pass' : 'badge-fail';
+            const pts = ev.points ?? 0;
+            const isNegRubric = pts < 0;
+            // Effective contribution: PASS always applies pts (neg rubric PASS = penalty)
+            const effectivePts = ev.status === 'PASS' ? pts : 0;
+            const ptsDisplay = pts === 0 && !isNegRubric ? '—'
+                : effectivePts < 0 ? `<span class="text-red-600 font-semibold">${effectivePts}</span>`
+                : effectivePts > 0 ? `<span class="text-green-700 font-semibold">+${effectivePts}</span>`
+                : `<span class="text-gray-400">0</span>`;
+            const rowClass = isNegRubric ? 'rhea-row-negative' : '';
             html += `
-                <tr>
+                <tr class="${rowClass}">
                     <td class="text-gray-700">${escapeHtml(ev.criteria)}</td>
-                    <td class="text-center text-gray-500 text-xs font-medium">${ev.points ?? ''}</td>
+                    <td class="text-center text-xs font-medium">${ptsDisplay}</td>
                     <td><span class="${badge}">${ev.status}</span></td>
                     <td class="text-gray-500 text-xs rhea-reason-cell">${escapeHtml(ev.reason || '—')}</td>
                 </tr>`;
@@ -1386,6 +1635,13 @@ function showToast(message, type = 'info') {
 
 // ── Settings Modal ────────────────────────────────────────────────────────────
 
+// ─── Settings Modal ───
+const SK_PROVIDERS = [
+    { id: 'anthropic', envKey: 'ANTHROPIC_API_KEY' },
+    { id: 'openai',    envKey: 'OPENAI_API_KEY' },
+    { id: 'google',    envKey: 'GOOGLE_AI_API_KEY' },
+];
+
 function openSettingsModal() {
     document.getElementById('settings-modal').style.display = 'flex';
     loadSettings();
@@ -1393,9 +1649,11 @@ function openSettingsModal() {
 
 function closeSettingsModal() {
     document.getElementById('settings-modal').style.display = 'none';
-    document.getElementById('key-anthropic').value = '';
-    document.getElementById('key-openai').value = '';
-    document.getElementById('key-google').value = '';
+    SK_PROVIDERS.forEach(p => {
+        const inp = document.getElementById('key-' + p.id);
+        if (inp) inp.value = '';
+        _hideInputRow(p.id);
+    });
 }
 
 function handleSettingsOverlayClick(e) {
@@ -1404,75 +1662,153 @@ function handleSettingsOverlayClick(e) {
 
 async function loadSettings() {
     try {
-        const res = await fetch('/api/settings/keys');
-        const data = await res.json();
-        _applyKeyStatus('ind-anthropic', data.ANTHROPIC_API_KEY);
-        _applyKeyStatus('ind-openai',    data.OPENAI_API_KEY);
-        _applyKeyStatus('ind-google',    data.GOOGLE_AI_API_KEY);
-        _updateHeaderKeyIndicator(data);
+        const [keysRes, modelsRes] = await Promise.all([
+            fetch('/api/settings/keys'),
+            fetch('/api/settings/analysis-models'),
+        ]);
+        const keysData   = await keysRes.json();
+        const modelsData = await modelsRes.json();
+        _applyAllKeyStatuses(keysData);
+        _applyAnalysisModels(modelsData.models || {});
     } catch (_) {}
 }
 
-function _applyKeyStatus(badgeId, info) {
-    const badge = document.getElementById(badgeId);
+function _applyAnalysisModels(models) {
+    ['prompt', 'rubric', 'rhea'].forEach(task => {
+        const sel = document.getElementById('model-select-' + task);
+        if (sel && models[task]) sel.value = models[task];
+    });
+}
+
+async function saveAnalysisModel(task, modelId) {
+    try {
+        await fetch('/api/settings/analysis-models', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [task]: modelId }),
+        });
+        showToast(`Model updated for ${task} analysis.`, 'success');
+    } catch (e) {
+        showToast('Failed to save model preference.', 'error');
+    }
+}
+
+function _applyAllKeyStatuses(data) {
+    _applyKeyRow('anthropic', data.ANTHROPIC_API_KEY);
+    _applyKeyRow('openai',    data.OPENAI_API_KEY);
+    _applyKeyRow('google',    data.GOOGLE_AI_API_KEY);
+    _updateHeaderKeyIndicator(data);
+}
+
+function _applyKeyRow(provider, info) {
+    const badge   = document.getElementById('sk-badge-' + provider);
+    const actions = document.getElementById('sk-actions-' + provider);
+    const inputRow = document.getElementById('sk-input-' + provider);
     if (!badge) return;
+
     if (info && info.set) {
-        badge.textContent = info.masked || 'Set';
-        badge.classList.remove('settings-key-badge-missing');
-        badge.classList.add('settings-key-badge-ok');
+        badge.textContent = info.masked || '••••••••';
+        badge.className = 'sk-badge sk-badge-set';
+        if (actions) actions.classList.remove('hidden');
+        if (inputRow) inputRow.classList.add('hidden');
     } else {
         badge.textContent = 'Not set';
-        badge.classList.remove('settings-key-badge-ok');
-        badge.classList.add('settings-key-badge-missing');
+        badge.className = 'sk-badge sk-badge-unset';
+        if (actions) actions.classList.add('hidden');
+        // auto-open input when not set
+        if (inputRow) inputRow.classList.remove('hidden');
+    }
+}
+
+function editKey(provider) {
+    const inputRow = document.getElementById('sk-input-' + provider);
+    if (inputRow) {
+        inputRow.classList.remove('hidden');
+        const inp = document.getElementById('key-' + provider);
+        if (inp) { inp.value = ''; inp.focus(); }
+    }
+}
+
+function cancelEdit(provider) {
+    _hideInputRow(provider);
+}
+
+function _hideInputRow(provider) {
+    const inputRow = document.getElementById('sk-input-' + provider);
+    const actions  = document.getElementById('sk-actions-' + provider);
+    const badge    = document.getElementById('sk-badge-' + provider);
+    // only hide if key is already set (otherwise keep input visible)
+    if (badge && badge.classList.contains('sk-badge-set')) {
+        if (inputRow) inputRow.classList.add('hidden');
+    }
+    const inp = document.getElementById('key-' + provider);
+    if (inp) inp.value = '';
+}
+
+async function saveSingleKey(envKey, provider) {
+    const inp = document.getElementById('key-' + provider);
+    const value = inp ? inp.value.trim() : '';
+    if (!value) {
+        showToast('Please enter a key value.', 'warn');
+        if (inp) inp.focus();
+        return;
+    }
+    try {
+        const res = await fetch('/api/settings/keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [envKey]: value }),
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            showToast('Key saved successfully.', 'success');
+            await loadSettings();
+        } else {
+            showToast('Failed to save key.', 'error');
+        }
+    } catch (e) {
+        showToast('Error saving key: ' + e.message, 'error');
+    }
+}
+
+async function deleteApiKey(envKey, provider) {
+    try {
+        const res = await fetch(`/api/settings/keys/${envKey}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            showToast('Key removed.', 'success');
+            _applyAllKeyStatuses(data.keys);
+        } else {
+            showToast('Failed to remove key.', 'error');
+        }
+    } catch (e) {
+        showToast('Error removing key: ' + e.message, 'error');
+    }
+}
+
+async function deleteAllApiKeys() {
+    try {
+        const res = await fetch('/api/settings/keys/all', { method: 'DELETE' });
+        const data = await res.json();
+        if (data.status === 'ok') {
+            showToast('All API keys removed.', 'success');
+            _applyAllKeyStatuses(data.keys);
+        } else {
+            showToast('Failed to remove keys.', 'error');
+        }
+    } catch (e) {
+        showToast('Error removing keys: ' + e.message, 'error');
     }
 }
 
 function _updateHeaderKeyIndicator(data) {
     const dot = document.getElementById('settings-keys-indicator');
     if (!dot) return;
-    const allSet = data.ANTHROPIC_API_KEY?.set && data.OPENAI_API_KEY?.set && data.GOOGLE_AI_API_KEY?.set;
+    const allSet  = data.ANTHROPIC_API_KEY?.set && data.OPENAI_API_KEY?.set && data.GOOGLE_AI_API_KEY?.set;
     const someSet = data.ANTHROPIC_API_KEY?.set || data.OPENAI_API_KEY?.set || data.GOOGLE_AI_API_KEY?.set;
     dot.classList.remove('settings-keys-missing', 'settings-keys-partial', 'settings-keys-ok');
-    if (allSet) {
-        dot.classList.add('settings-keys-ok');
-        dot.title = 'All API keys configured';
-    } else if (someSet) {
-        dot.classList.add('settings-keys-partial');
-        dot.title = 'Some API keys missing';
-    } else {
-        dot.classList.add('settings-keys-missing');
-        dot.title = 'API keys not configured';
-    }
-}
-
-async function saveSettings() {
-    const payload = {
-        ANTHROPIC_API_KEY: document.getElementById('key-anthropic').value.trim(),
-        OPENAI_API_KEY:    document.getElementById('key-openai').value.trim(),
-        GOOGLE_AI_API_KEY: document.getElementById('key-google').value.trim(),
-    };
-
-    if (!payload.ANTHROPIC_API_KEY && !payload.OPENAI_API_KEY && !payload.GOOGLE_AI_API_KEY) {
-        showToast('Enter at least one API key to save.', 'warn');
-        return;
-    }
-
-    try {
-        const res = await fetch('/api/settings/keys', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (data.status === 'ok') {
-            showToast(`Saved: ${data.updated.join(', ')}`, 'success');
-            closeSettingsModal();
-            loadSettings();
-        } else {
-            showToast('Failed to save keys.', 'error');
-        }
-    } catch (e) {
-        showToast('Error saving keys: ' + e.message, 'error');
-    }
+    if (allSet)       { dot.classList.add('settings-keys-ok');      dot.title = 'All API keys configured'; }
+    else if (someSet) { dot.classList.add('settings-keys-partial'); dot.title = 'Some API keys missing'; }
+    else              { dot.classList.add('settings-keys-missing'); dot.title = 'API keys not configured'; }
 }
 

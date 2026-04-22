@@ -1,7 +1,7 @@
-import anthropic
 import os
 import json
 import re
+from services.llm_caller import call_llm, DEFAULT_MODELS
 
 RHEA_SYSTEM_PROMPT = """{
   "instructions": {
@@ -46,40 +46,47 @@ RHEA_SYSTEM_PROMPT = """{
 def parse_rubrics_to_criteria(rubric_text: str) -> list[dict]:
     """
     Parse rubric text into criteria dicts with point values.
-    Lines starting with [N] are rubric items; Source:/Sources: lines are metadata and are skipped.
+    Uses stateful parsing identical to the JS parseRubrics() function:
+      - Lines starting with [N] or [-N] open a new rubric entry.
+      - Lines starting with Source:/Sources: are metadata — skipped.
+      - Any other line after an open entry is a continuation of its text.
+    This prevents stray source/section labels from being treated as criteria.
     """
     lines = rubric_text.strip().split("\n")
     criteria = []
+    current = None
+
     for line in lines:
-        line = line.strip()
-        if not line:
+        stripped = line.strip()
+        if not stripped:
             continue
-        # Skip source attribution lines
-        if re.match(r'^sources?:', line, re.IGNORECASE):
+        # Skip source / section attribution lines
+        if re.match(r'^sources?:', stripped, re.IGNORECASE):
             continue
-        # Match lines that start with [N] — rubric items with point values
-        match = re.match(r'^\[(\d+)\]\s+(.+)', line)
+        # New rubric entry: [N] or [-N]
+        match = re.match(r'^\[(-?\d+)\]\s+(.*)', stripped)
         if match:
-            points = int(match.group(1))
-            text = match.group(2).strip()
-            criteria.append({"criteria": text, "points": points})
-        else:
-            # Fallback: plain lines without a [N] prefix
-            cleaned = line.lstrip("0123456789.-•) ").strip()
-            if cleaned:
-                criteria.append({"criteria": cleaned, "points": 0})
+            if current:
+                criteria.append(current)
+            current = {
+                "criteria": match.group(2).strip(),
+                "points": int(match.group(1)),
+            }
+        elif current:
+            # Continuation line — append to the current criterion text
+            current["criteria"] += " " + stripped
+
+    if current:
+        criteria.append(current)
+
     return criteria
 
 
-def evaluate_response(model_response: str, rubric_text: str) -> dict:
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+def evaluate_response(model_response: str, rubric_text: str, model: str = None) -> dict:
+    model = model or DEFAULT_MODELS["rhea"]
 
     criteria_list = parse_rubrics_to_criteria(rubric_text)
-
-    # Build a lookup of points by criteria text (for attaching back after LLM evaluation)
     points_map = {c["criteria"]: c["points"] for c in criteria_list}
-
-    # Send only the criteria text to the LLM — no point metadata needed there
     llm_criteria = [{"criteria": c["criteria"]} for c in criteria_list]
 
     user_message = json.dumps({
@@ -87,14 +94,7 @@ def evaluate_response(model_response: str, rubric_text: str) -> dict:
         "model_response": model_response
     }, indent=2)
 
-    response = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=8192,
-        system=RHEA_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_message}]
-    )
-
-    response_text = response.content[0].text
+    response_text = call_llm(model, RHEA_SYSTEM_PROMPT, user_message, max_tokens=8192)
 
     try:
         start = response_text.find("{")
@@ -110,8 +110,24 @@ def evaluate_response(model_response: str, rubric_text: str) -> dict:
             total = len(evaluations)
             passed = sum(1 for e in evaluations if e.get("status") == "PASS")
             failed = total - passed
-            scored_points = sum(e["points"] for e in evaluations if e.get("status") == "PASS")
-            max_points = sum(c["points"] for c in criteria_list)
+
+            # Scoring rules:
+            #   Positive rubric [N]  → PASS = +N pts,  FAIL =  0 pts
+            #   Negative rubric [-N] → PASS = -N pts (penalty), FAIL = 0 pts
+            # In both cases: effective contribution = PASS ? pts : 0
+            scored_points = 0
+            penalty_points = 0
+            for ev in evaluations:
+                pts = ev["points"]
+                if ev.get("status") == "PASS":
+                    scored_points += pts
+                    if pts < 0:
+                        penalty_points += pts   # track applied penalties separately
+
+            max_points = sum(c["points"] for c in criteria_list if c["points"] > 0)
+            penalty_max = sum(c["points"] for c in criteria_list if c["points"] < 0)
+
+            points_rate = round((scored_points / max_points * 100), 1) if max_points > 0 else 0
 
             result["summary"] = {
                 "total": total,
@@ -120,7 +136,9 @@ def evaluate_response(model_response: str, rubric_text: str) -> dict:
                 "pass_rate": round((passed / total * 100), 1) if total > 0 else 0,
                 "scored_points": scored_points,
                 "max_points": max_points,
-                "points_rate": round((scored_points / max_points * 100), 1) if max_points > 0 else 0
+                "penalty_points": penalty_points,
+                "penalty_max": penalty_max,
+                "points_rate": points_rate,
             }
             return result
     except json.JSONDecodeError:

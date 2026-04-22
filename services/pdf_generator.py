@@ -56,6 +56,15 @@ def _escape_xml(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _split_rubric_label(text: str) -> tuple[str, str]:
+    """Split 'Rubric #3: Some criterion text' → ('#3', 'Some criterion text').
+    Falls back to ('', text) if no label is found."""
+    m = re.match(r'^Rubric\s*#?(\d+)\s*[:\-]\s*(.+)', text, re.IGNORECASE)
+    if m:
+        return f"#{m.group(1)}", m.group(2).strip()
+    return "", text
+
+
 def _inline_md(text: str) -> str:
     """Convert inline markdown tokens to reportlab paragraph XML."""
     text = _escape_xml(text)
@@ -731,25 +740,33 @@ def generate_rhea_pdf(rhea_results: dict) -> bytes:
     summary_rows = []
     for _, data in entries:
         s = data.get("summary", {})
-        pass_rate = s.get("pass_rate", 0)
-        rate_color = "#16a34a" if pass_rate >= 80 else "#ca8a04" if pass_rate >= 50 else "#dc2626"
+        scored   = s.get("scored_points", 0)
+        max_pts  = s.get("max_points", 0)
+        pts_rate = s.get("points_rate", 0)
+        penalty  = s.get("penalty_points", 0)
+        primary_rate = pts_rate if max_pts > 0 else s.get("pass_rate", 0)
+        rate_color = "#16a34a" if primary_rate >= 80 else "#ca8a04" if primary_rate >= 50 else "#dc2626"
+        penalty_line = (
+            f'<font size="9" color="#b91c1c"><b>Penalties applied: {penalty} pts</b></font><br/>'
+            if penalty < 0 else ""
+        )
         card_content = [
             Paragraph(f'<font name="Helvetica-Bold" size="11" color="#111827">'
                       f'{_escape_xml(data.get("model_name", ""))}</font>', styles["body"]),
             Paragraph(f'<font name="Helvetica-Bold" size="16" color="{rate_color}">'
-                      f'{pass_rate}%</font><font size="9" color="#6b7280"> pass rate</font>', styles["body"]),
+                      f'{primary_rate}%</font><font size="9" color="#6b7280"> score</font>', styles["body"]),
             Paragraph(
                 f'<font size="9" color="#374151">'
-                f'<b>{s.get("total", 0)}</b> total &nbsp; '
+                f'<b>{s.get("total", 0)}</b> criteria &nbsp; '
                 f'<font color="#16a34a"><b>{s.get("passed", 0)}</b></font> passed &nbsp; '
                 f'<font color="#dc2626"><b>{s.get("failed", 0)}</b></font> failed'
                 f'</font>',
                 styles["body"]
             ),
             Paragraph(
+                penalty_line +
                 f'<font size="9" color="#374151">'
-                f'{s.get("scored_points", 0)} / {s.get("max_points", 0)} pts '
-                f'({s.get("points_rate", 0)}%)'
+                f'{scored} / {max_pts} pts ({pts_rate}%)'
                 f'</font>',
                 styles["body"]
             ),
@@ -802,12 +819,25 @@ def generate_rhea_pdf(rhea_results: dict) -> bytes:
         _, data = entries[0]
         evaluations = data.get("evaluations", [])
 
-        col_criteria = 75 * mm
-        col_pts = 10 * mm
-        col_status = 14 * mm
-        col_reason = page_width - col_criteria - col_pts - col_status
+        col_num      = 12 * mm
+        col_pts      = 10 * mm
+        col_status   = 14 * mm
+        col_criteria = 65 * mm
+        col_reason   = page_width - col_num - col_criteria - col_pts - col_status
+
+        num_style = ParagraphStyle("num_sm", fontName="Helvetica-Bold", fontSize=8,
+                                   leading=11, textColor=GRAY_700, alignment=1)
+        neg_pts_style = ParagraphStyle("neg_pts", fontName="Helvetica-Bold", fontSize=8.5,
+                                       leading=12, textColor=colors.HexColor("#991b1b"), alignment=1)
+        pos_pts_style = ParagraphStyle("pos_pts", fontName="Helvetica-Bold", fontSize=8.5,
+                                       leading=12, textColor=colors.HexColor("#166534"), alignment=1)
+        zero_pts_style = ParagraphStyle("zero_pts", fontName="Helvetica", fontSize=8.5,
+                                        leading=12, textColor=GRAY_500, alignment=1)
+
+        PENALTY_BG = colors.HexColor("#fff7ed")
 
         table_data = [[
+            Paragraph("No.", header_style),
             Paragraph("Criteria", header_style),
             Paragraph("Pts", header_style),
             Paragraph("Status", header_style),
@@ -816,28 +846,46 @@ def generate_rhea_pdf(rhea_results: dict) -> bytes:
         row_colors = [("BACKGROUND", (0, 0), (-1, 0), BRAND)]
 
         for i, ev in enumerate(evaluations):
-            is_pass = ev.get("status", "") == "PASS"
-            status_bg = PASS_COLOR if is_pass else FAIL_COLOR
-            status_fg = PASS_TEXT if is_pass else FAIL_TEXT
+            is_pass    = ev.get("status", "") == "PASS"
+            raw_pts    = ev.get("points", 0)
+            is_neg     = raw_pts < 0
+            # Effective contribution: PASS applies pts, FAIL = 0
+            eff_pts    = raw_pts if is_pass else 0
+
+            rubric_label, criteria_text = _split_rubric_label(ev.get("criteria", ""))
+
+            if eff_pts < 0:
+                pts_para = Paragraph(str(eff_pts), neg_pts_style)
+            elif eff_pts > 0:
+                pts_para = Paragraph(f"+{eff_pts}", pos_pts_style)
+            else:
+                pts_para = Paragraph("0" if is_neg else "—", zero_pts_style)
+
             status_para = Paragraph(
-                f'<font color="{"#166534" if is_pass else "#991b1b"}" name="Helvetica-Bold">'
+                f'<font color="{"#166634" if is_pass else "#991b1b"}" name="Helvetica-Bold">'
                 f'{_escape_xml(ev.get("status", ""))}</font>',
-                body_sm
+                body_sm,
             )
+
             row = [
-                Paragraph(_escape_xml(ev.get("criteria", "")), body_sm),
-                Paragraph(str(ev.get("points", "")), body_sm),
+                Paragraph(_escape_xml(rubric_label or str(i + 1)), num_style),
+                Paragraph(_escape_xml(criteria_text), body_sm),
+                pts_para,
                 status_para,
                 Paragraph(_escape_xml(ev.get("reason", "—")), reason_sm),
             ]
             table_data.append(row)
-            bg = colors.HexColor("#ffffff") if i % 2 == 0 else colors.HexColor("#f9fafb")
+
+            bg = PENALTY_BG if is_neg else (
+                colors.HexColor("#ffffff") if i % 2 == 0 else colors.HexColor("#f9fafb")
+            )
             row_colors.append(("BACKGROUND", (0, i + 1), (-1, i + 1), bg))
-            row_colors.append(("BACKGROUND", (2, i + 1), (2, i + 1), status_bg))
+            status_bg = PASS_COLOR if is_pass else FAIL_COLOR
+            row_colors.append(("BACKGROUND", (3, i + 1), (3, i + 1), status_bg))
 
         tbl = Table(
             table_data,
-            colWidths=[col_criteria, col_pts, col_status, col_reason],
+            colWidths=[col_num, col_criteria, col_pts, col_status, col_reason],
             repeatRows=1,
         )
         style_cmds = [
@@ -848,8 +896,8 @@ def generate_rhea_pdf(rhea_results: dict) -> bytes:
             ("TOPPADDING",    (0, 0), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
-            ("ALIGN",         (1, 0), (1, -1), "CENTER"),
-            ("ALIGN",         (2, 0), (2, -1), "CENTER"),
+            ("ALIGN",         (0, 0), (0, -1), "CENTER"),
+            ("ALIGN",         (2, 0), (3, -1), "CENTER"),
         ] + row_colors
         tbl.setStyle(TableStyle(style_cmds))
         elements.append(tbl)
@@ -859,13 +907,15 @@ def generate_rhea_pdf(rhea_results: dict) -> bytes:
         max_rows = max(len(d.get("evaluations", [])) for _, d in entries)
         model_names = [d.get("model_name", k) for k, d in entries]
 
-        col_criteria = 55 * mm
-        col_pts = 9 * mm
-        per_model_w = (page_width - col_criteria - col_pts) / len(entries)
-        col_status = per_model_w * 0.32
-        col_reason = per_model_w * 0.68
+        col_num      = 10 * mm
+        col_criteria = 48 * mm
+        col_pts      = 9 * mm
+        per_model_w  = (page_width - col_num - col_criteria - col_pts) / len(entries)
+        col_status   = per_model_w * 0.32
+        col_reason   = per_model_w * 0.68
 
         header_row = [
+            Paragraph("No.", header_style),
             Paragraph("Criteria", header_style),
             Paragraph("Pts", header_style),
         ]
@@ -875,27 +925,47 @@ def generate_rhea_pdf(rhea_results: dict) -> bytes:
                 Paragraph("Reason", header_style),
             ]
 
-        col_widths = [col_criteria, col_pts]
+        col_widths = [col_num, col_criteria, col_pts]
         for _ in entries:
             col_widths += [col_status, col_reason]
+
+        num_style_m = ParagraphStyle("num_sm_m", fontName="Helvetica-Bold", fontSize=7.5,
+                                     leading=10, textColor=GRAY_700, alignment=1)
 
         table_data = [header_row]
         row_colors = [("BACKGROUND", (0, 0), (-1, 0), BRAND)]
 
         for i in range(max_rows):
             first_ev = (entries[0][1].get("evaluations") or [])[i] if i < len(entries[0][1].get("evaluations", [])) else None
-            criteria_text = first_ev.get("criteria", "—") if first_ev else "—"
-            pts_text = str(first_ev.get("points", "")) if first_ev else ""
+            raw_criteria = first_ev.get("criteria", "—") if first_ev else "—"
+            raw_pts = first_ev.get("points", 0) if first_ev else 0
+            is_neg = raw_pts < 0
+
+            rubric_label, criteria_text = _split_rubric_label(raw_criteria)
+
+            # Effective pts based on first model's evaluation status
+            first_is_pass = (first_ev.get("status") == "PASS") if first_ev else False
+            eff_pts = raw_pts if first_is_pass else 0
+            if eff_pts < 0:
+                pts_text = str(eff_pts)
+            elif eff_pts > 0:
+                pts_text = f"+{eff_pts}"
+            else:
+                pts_text = "0" if is_neg else "—"
 
             row = [
+                Paragraph(_escape_xml(rubric_label or str(i + 1)), num_style_m),
                 Paragraph(_escape_xml(criteria_text), body_sm),
                 Paragraph(pts_text, body_sm),
             ]
 
-            bg_row = colors.HexColor("#ffffff") if i % 2 == 0 else colors.HexColor("#f9fafb")
+            PENALTY_BG_M = colors.HexColor("#fff7ed")
+            bg_row = PENALTY_BG_M if is_neg else (
+                colors.HexColor("#ffffff") if i % 2 == 0 else colors.HexColor("#f9fafb")
+            )
             row_colors.append(("BACKGROUND", (0, i + 1), (-1, i + 1), bg_row))
 
-            col_idx = 2
+            col_idx = 3
             for _, data in entries:
                 evs = data.get("evaluations", [])
                 ev = evs[i] if i < len(evs) else None
@@ -924,7 +994,8 @@ def generate_rhea_pdf(rhea_results: dict) -> bytes:
             ("TOPPADDING",    (0, 0), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
-            ("ALIGN",         (1, 0), (1, -1), "CENTER"),
+            ("ALIGN",         (0, 0), (0, -1), "CENTER"),
+            ("ALIGN",         (2, 0), (2, -1), "CENTER"),
         ] + row_colors
         tbl.setStyle(TableStyle(style_cmds))
         elements.append(tbl)
