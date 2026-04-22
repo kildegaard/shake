@@ -3,18 +3,21 @@ let appState = {
     promptLoaded: false,
     rubricLoaded: false,
     contextFilesCount: 0,
-    llmResponses: {},
-    rheaResults: {}
+    // Run history (persisted on server, restored on page load)
+    llmRuns: {},       // modelKey → [{run_id, ts, model, status, response, error, warning}]
+    promptRuns: [],    // [{run_id, ts, result}]
+    rubricRuns: [],    // [{run_id, ts, result}]
+    rheaRuns: [],      // [{run_id, ts, model_name, model_key, llm_run_id, result}]
+    // Active selections
+    activeLLMModel: null,   // active model key for the main model tabs
+    activeLLMRun: {},       // modelKey → run_id (active sub-tab per model)
+    activePromptRun: null,
+    activeRubricRun: null,
+    activeRheaRun: null,
 };
 
-// Raw response text stored by modelKey for markdown toggle + PDF
-const llmRawResponses = {};
-
-// Markdown toggle state per model tab (true = rendered, false = raw)
+// Markdown toggle state per model+run (key: modelKey+':'+runId → boolean)
 const mdToggleState = {};
-
-// Currently active model tab key
-let activeModelTab = null;
 
 // ─── Materials Preview ───
 function toggleMaterialsPreview() {
@@ -395,9 +398,41 @@ async function fetchStatus() {
         const res = await fetch('/api/status');
         const data = await res.json();
         updateStatus(data);
-        if (data.llm_responses) {
-            appState.llmResponses = data.llm_responses;
+        // Restore persisted runs
+        if (data.llm_runs) {
+            appState.llmRuns = data.llm_runs;
+            // Set active model to the first model with runs (if none already set)
+            if (!appState.activeLLMModel) {
+                const firstKey = MODEL_ORDER.find(k => (appState.llmRuns[k] || []).length > 0);
+                if (firstKey) {
+                    appState.activeLLMModel = firstKey;
+                    const runs = appState.llmRuns[firstKey];
+                    appState.activeLLMRun[firstKey] = runs[runs.length - 1].run_id;
+                }
+            }
+            renderAllLLMTabs();
             updateRheaModelSelect();
+        }
+        if (data.prompt_runs) {
+            appState.promptRuns = data.prompt_runs;
+            if (!appState.activePromptRun && data.prompt_runs.length > 0) {
+                appState.activePromptRun = data.prompt_runs[data.prompt_runs.length - 1].run_id;
+            }
+            renderPromptRunTabs();
+        }
+        if (data.rubric_runs) {
+            appState.rubricRuns = data.rubric_runs;
+            if (!appState.activeRubricRun && data.rubric_runs.length > 0) {
+                appState.activeRubricRun = data.rubric_runs[data.rubric_runs.length - 1].run_id;
+            }
+            renderRubricRunTabs();
+        }
+        if (data.rhea_runs) {
+            appState.rheaRuns = data.rhea_runs;
+            if (!appState.activeRheaRun && data.rhea_runs.length > 0) {
+                appState.activeRheaRun = data.rhea_runs[data.rhea_runs.length - 1].run_id;
+            }
+            renderRheaRunTabs();
         }
     } catch (e) {
         // silent
@@ -427,13 +462,15 @@ async function clearAll() {
             adv.innerHTML = '<div class="empty-state"><p>Upload a prompt and rubrics, then run <strong>Analyze &amp; Harden</strong>. Optionally run Rhea first and check <strong>Include Rhea results</strong> to flag criteria all models passed.</p></div>';
         }
         adversarialLastHardened = '';
-        appState = { promptLoaded: false, rubricLoaded: false, contextFilesCount: 0, llmResponses: {}, rheaResults: {} };
+        appState = {
+            promptLoaded: false, rubricLoaded: false, contextFilesCount: 0,
+            llmRuns: {}, promptRuns: [], rubricRuns: [], rheaRuns: [],
+            activeLLMModel: null, activeLLMRun: {},
+            activePromptRun: null, activeRubricRun: null, activeRheaRun: null,
+        };
         const pdfBtn = document.getElementById('btn-rhea-pdf');
         if (pdfBtn) pdfBtn.classList.add('hidden');
-        // Reset tab state
-        for (const k of Object.keys(llmRawResponses)) delete llmRawResponses[k];
         for (const k of Object.keys(mdToggleState)) delete mdToggleState[k];
-        activeModelTab = null;
         updateStatus({ prompt_loaded: false, prompt_length: 0, context_files_count: 0, rubric_loaded: false, rubric_length: 0 });
         updateRheaModelSelect();
         showToast('All data cleared.', 'success');
@@ -474,11 +511,49 @@ async function analyzePrompt() {
             return;
         }
 
-        renderPromptAnalysis(data);
+        const runId = data.run_id;
+        // Add to local runs
+        appState.promptRuns.push({ run_id: runId, ts: new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}), result: data });
+        appState.activePromptRun = runId;
+        renderPromptRunTabs();
     } catch (e) {
         showToast('Prompt analysis failed: ' + e.message, 'error');
     } finally {
         hideLoading();
+    }
+}
+
+function renderPromptRunTabs() {
+    const container = document.getElementById('prompt-analysis-results');
+    if (appState.promptRuns.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>Upload a prompt and click "Analyze Prompt" to evaluate its quality.</p></div>';
+        return;
+    }
+    if (!appState.activePromptRun) appState.activePromptRun = appState.promptRuns[appState.promptRuns.length - 1].run_id;
+    const activeRun = appState.promptRuns.find(r => r.run_id === appState.activePromptRun);
+    if (!activeRun) return;
+
+    let html = _runsBarHtml(appState.promptRuns, appState.activePromptRun, 'switchPromptRun', 'deletePromptRun');
+    container.innerHTML = html;
+    renderPromptAnalysis(activeRun.result);
+}
+
+function switchPromptRun(runId) {
+    appState.activePromptRun = runId;
+    renderPromptRunTabs();
+}
+
+async function deletePromptRun(runId) {
+    try {
+        await fetch(`/api/runs/prompt/${runId}`, { method: 'DELETE' });
+        appState.promptRuns = appState.promptRuns.filter(r => r.run_id !== runId);
+        if (appState.activePromptRun === runId) {
+            appState.activePromptRun = appState.promptRuns.length ? appState.promptRuns[appState.promptRuns.length - 1].run_id : null;
+        }
+        renderPromptRunTabs();
+        showToast('Run deleted.', 'success');
+    } catch (e) {
+        showToast('Delete failed: ' + e.message, 'error');
     }
 }
 
@@ -569,13 +644,13 @@ function renderPromptAnalysis(data) {
         html += '</div>';
     }
 
-    container.innerHTML = html;
+    container.innerHTML += html;
     container._promptData = data;
 }
 
 async function downloadPromptPDF() {
-    const container = document.getElementById('prompt-analysis-results');
-    const data = container._promptData;
+    const activeRun = appState.promptRuns.find(r => r.run_id === appState.activePromptRun);
+    const data = activeRun?.result || document.getElementById('prompt-analysis-results')._promptData;
     if (!data) {
         showToast('No prompt analysis to export.', 'warn');
         return;
@@ -649,11 +724,48 @@ async function analyzeRubrics() {
             return;
         }
 
-        renderRubricAnalysis(data);
+        const runId = data.run_id;
+        appState.rubricRuns.push({ run_id: runId, ts: new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}), result: data });
+        appState.activeRubricRun = runId;
+        renderRubricRunTabs();
     } catch (e) {
         showToast('Rubric analysis failed: ' + e.message, 'error');
     } finally {
         hideLoading();
+    }
+}
+
+function renderRubricRunTabs() {
+    const container = document.getElementById('rubric-analysis-results');
+    if (appState.rubricRuns.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>Upload a prompt and rubrics, then click "Analyze Rubrics" to evaluate quality and coverage.</p></div>';
+        return;
+    }
+    if (!appState.activeRubricRun) appState.activeRubricRun = appState.rubricRuns[appState.rubricRuns.length - 1].run_id;
+    const activeRun = appState.rubricRuns.find(r => r.run_id === appState.activeRubricRun);
+    if (!activeRun) return;
+
+    let html = _runsBarHtml(appState.rubricRuns, appState.activeRubricRun, 'switchRubricRun', 'deleteRubricRun');
+    container.innerHTML = html;
+    renderRubricAnalysis(activeRun.result);
+}
+
+function switchRubricRun(runId) {
+    appState.activeRubricRun = runId;
+    renderRubricRunTabs();
+}
+
+async function deleteRubricRun(runId) {
+    try {
+        await fetch(`/api/runs/rubric/${runId}`, { method: 'DELETE' });
+        appState.rubricRuns = appState.rubricRuns.filter(r => r.run_id !== runId);
+        if (appState.activeRubricRun === runId) {
+            appState.activeRubricRun = appState.rubricRuns.length ? appState.rubricRuns[appState.rubricRuns.length - 1].run_id : null;
+        }
+        renderRubricRunTabs();
+        showToast('Run deleted.', 'success');
+    } catch (e) {
+        showToast('Delete failed: ' + e.message, 'error');
     }
 }
 
@@ -740,13 +852,13 @@ function renderRubricAnalysis(data) {
         `;
     }
 
-    container.innerHTML = html;
+    container.innerHTML += html;
     container._rubricData = data;
 }
 
 async function downloadRubricPDF() {
-    const container = document.getElementById('rubric-analysis-results');
-    const data = container._rubricData;
+    const activeRun = appState.rubricRuns.find(r => r.run_id === appState.activeRubricRun);
+    const data = activeRun?.result || document.getElementById('rubric-analysis-results')._rubricData;
     if (!data) {
         showToast('No rubric analysis to export.', 'warn');
         return;
@@ -784,7 +896,27 @@ async function downloadRubricPDF() {
     }
 }
 
+// ─── Shared run-tab bar helper ───
+function _runsBarHtml(runs, activeRunId, switchFn, deleteFn) {
+    if (!runs || runs.length === 0) return '';
+    return `<div class="runs-bar">
+        ${runs.map(r => {
+            const label = r.label || `Run ${r.run_id}`;
+            return `<button class="run-tab${r.run_id === activeRunId ? ' run-tab-active' : ''}"
+                onclick="${switchFn}(${r.run_id})">
+                ${label}
+                <span class="run-ts">${r.ts}</span>
+                <span class="run-delete" onclick="event.stopPropagation();${deleteFn}(${r.run_id})" title="Delete this run">×</span>
+            </button>`;
+        }).join('')}
+    </div>`;
+}
+
 // ─── LLM Testing ───
+
+// Preferred display order for model tabs
+const MODEL_ORDER = ['gpt_54', 'gemini_31_pro', 'opus_46'];
+
 async function runLLMs() {
     const models = [];
     if (document.getElementById('model-gpt').checked) models.push('gpt');
@@ -812,21 +944,31 @@ async function runLLMs() {
             return;
         }
 
-        // Merge new results into accumulated state (don't reset existing tabs)
+        // Merge new runs into accumulated state
+        const runIds = data.run_ids || {};
         let firstNewKey = null;
         for (const r of data.results) {
             const key = r.model.toLowerCase().replace(/ /g, '_').replace(/\./g, '');
-            appState.llmResponses[key] = r;
-            if (r.status === 'success') {
-                llmRawResponses[key] = r.response || '';
-                if (!(key in mdToggleState)) mdToggleState[key] = true;
+            if (!appState.llmRuns[key]) appState.llmRuns[key] = [];
+            const runId = runIds[key];
+            const existing = appState.llmRuns[key].find(x => x.run_id === runId);
+            if (!existing) {
+                appState.llmRuns[key].push({
+                    run_id: runId,
+                    ts: new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}),
+                    model: r.model,
+                    status: r.status,
+                    response: r.response || '',
+                    error: r.error || '',
+                    warning: r.warning || '',
+                });
             }
+            // Set active run to the new one
+            appState.activeLLMRun[key] = runId;
             if (!firstNewKey) firstNewKey = key;
         }
 
-        // Switch to the first newly-run model tab
-        if (firstNewKey) activeModelTab = firstNewKey;
-
+        if (firstNewKey) appState.activeLLMModel = firstNewKey;
         renderAllLLMTabs();
         updateRheaModelSelect();
     } catch (e) {
@@ -836,111 +978,151 @@ async function runLLMs() {
     }
 }
 
-// Preferred display order for model tabs
-const MODEL_ORDER = ['gpt_54', 'gemini_31_pro', 'opus_46'];
-
 function renderAllLLMTabs() {
     const container = document.getElementById('llm-results');
-    const keys = MODEL_ORDER.filter(k => k in appState.llmResponses);
+    const keys = MODEL_ORDER.filter(k => (appState.llmRuns[k] || []).length > 0);
 
     if (keys.length === 0) {
         container.innerHTML = '<div class="empty-state"><p>Select models and click "Run Selected Models" to generate responses.</p></div>';
         return;
     }
 
-    if (!activeModelTab || !keys.includes(activeModelTab)) {
-        activeModelTab = keys[0];
+    if (!appState.activeLLMModel || !keys.includes(appState.activeLLMModel)) {
+        appState.activeLLMModel = keys[0];
     }
 
-    // ── Tab bar ──────────────────────────────────────────────────────────
-    let tabBarHtml = '<div class="llm-tab-bar">';
+    // ── Model tab bar ─────────────────────────────────────────────────────
+    let html = '<div class="llm-tab-bar">';
     for (const key of keys) {
-        const r = appState.llmResponses[key];
-        const isActive = key === activeModelTab;
-        const dot = r.status === 'success'
+        const runs = appState.llmRuns[key];
+        const latestRun = runs[runs.length - 1];
+        const isActive = key === appState.activeLLMModel;
+        const dot = latestRun.status === 'success'
             ? '<span class="tab-dot tab-dot-ok"></span>'
             : '<span class="tab-dot tab-dot-err"></span>';
-        tabBarHtml += `
-            <button class="llm-tab${isActive ? ' llm-tab-active' : ''}" onclick="switchModelTab('${key}')">
-                ${dot}${escapeHtml(r.model)}
-            </button>`;
+        html += `<button class="llm-tab${isActive ? ' llm-tab-active' : ''}" onclick="switchModelTab('${key}')">
+            ${dot}${escapeHtml(latestRun.model)}
+            <span class="llm-tab-run-count">${runs.length}</span>
+        </button>`;
     }
-    tabBarHtml += '</div>';
+    html += '</div>';
 
-    // ── Active tab content ────────────────────────────────────────────────
-    const activeR = appState.llmResponses[activeModelTab];
-    const isSuccess = activeR.status === 'success';
-    const isRendered = mdToggleState[activeModelTab] !== false;
+    // ── Run sub-tabs for active model ─────────────────────────────────────
+    const activeKey = appState.activeLLMModel;
+    const activeRuns = appState.llmRuns[activeKey] || [];
+    let activeRunId = appState.activeLLMRun[activeKey];
+    if (!activeRunId || !activeRuns.find(r => r.run_id === activeRunId)) {
+        activeRunId = activeRuns[activeRuns.length - 1]?.run_id;
+        appState.activeLLMRun[activeKey] = activeRunId;
+    }
 
-    const warningBanner = activeR.warning
-        ? `<div class="truncation-warning">⚠️ ${escapeHtml(activeR.warning)}</div>`
-        : '';
+    html += '<div class="runs-bar">';
+    for (const run of activeRuns) {
+        const isRunActive = run.run_id === activeRunId;
+        const runDot = run.status === 'success' ? '🟢' : '🔴';
+        html += `<button class="run-tab${isRunActive ? ' run-tab-active' : ''}"
+            onclick="switchLLMRun('${activeKey}', ${run.run_id})">
+            ${runDot} Run ${run.run_id}
+            <span class="run-ts">${run.ts}</span>
+            <span class="run-delete" onclick="event.stopPropagation();deleteLLMRun('${activeKey}', ${run.run_id})" title="Delete">×</span>
+        </button>`;
+    }
+    html += '</div>';
+
+    // ── Active run content ────────────────────────────────────────────────
+    const activeRun = activeRuns.find(r => r.run_id === activeRunId);
+    if (!activeRun) { container.innerHTML = html; return; }
+
+    const isSuccess = activeRun.status === 'success';
+    const mdKey = `${activeKey}:${activeRunId}`;
+    const isRendered = mdToggleState[mdKey] !== false;
+
+    const warningBanner = activeRun.warning
+        ? `<div class="truncation-warning">⚠️ ${escapeHtml(activeRun.warning)}</div>` : '';
 
     let bodyContent;
     if (isSuccess) {
         bodyContent = isRendered
-            ? marked.parse(activeR.response || '')
-            : escapeHtml(activeR.response || '');
+            ? marked.parse(activeRun.response || '')
+            : escapeHtml(activeRun.response || '');
     } else {
-        bodyContent = `<span style="color:#991b1b">Error: ${escapeHtml(activeR.error || 'Unknown error')}</span>`;
+        bodyContent = `<span style="color:#991b1b">Error: ${escapeHtml(activeRun.error || 'Unknown error')}</span>`;
     }
 
     const toolbar = isSuccess ? `
         <div class="llm-tab-toolbar">
             <label class="md-toggle-label">
                 <input type="checkbox" id="md-toggle-active" ${isRendered ? 'checked' : ''}
-                    onchange="toggleMarkdown('${activeModelTab}')">
+                    onchange="toggleMarkdown('${activeKey}', ${activeRunId})">
                 <span>Render MD</span>
             </label>
-            <button class="btn-download-pdf" onclick="downloadResponsePDF('${activeModelTab}')">⬇ PDF</button>
+            <button class="btn-download-pdf" id="btn-llm-pdf" onclick="downloadResponsePDF('${activeKey}', ${activeRunId})">⬇ PDF</button>
         </div>` : '';
 
     const bodyClass = isSuccess
         ? (isRendered ? 'response-body markdown-rendered' : 'response-body markdown-raw')
         : 'response-body';
 
-    const contentHtml = `
-        <div class="llm-tab-panel">
-            ${toolbar}
-            ${warningBanner}
-            <div class="${bodyClass}" id="llm-body-active">${bodyContent}</div>
-        </div>`;
+    html += `<div class="llm-tab-panel">
+        ${toolbar}${warningBanner}
+        <div class="${bodyClass}" id="llm-body-active">${bodyContent}</div>
+    </div>`;
 
-    container.innerHTML = tabBarHtml + contentHtml;
+    container.innerHTML = html;
 }
 
 function switchModelTab(key) {
-    activeModelTab = key;
+    appState.activeLLMModel = key;
     renderAllLLMTabs();
 }
 
-function toggleMarkdown(modelKey) {
+function switchLLMRun(modelKey, runId) {
+    appState.activeLLMRun[modelKey] = runId;
+    renderAllLLMTabs();
+}
+
+async function deleteLLMRun(modelKey, runId) {
+    try {
+        await fetch(`/api/runs/llm/${modelKey}/${runId}`, { method: 'DELETE' });
+        appState.llmRuns[modelKey] = (appState.llmRuns[modelKey] || []).filter(r => r.run_id !== runId);
+        if (!appState.llmRuns[modelKey]?.length) delete appState.llmRuns[modelKey];
+        if (appState.activeLLMRun[modelKey] === runId) delete appState.activeLLMRun[modelKey];
+        renderAllLLMTabs();
+        updateRheaModelSelect();
+        showToast('Run deleted.', 'success');
+    } catch (e) {
+        showToast('Delete failed: ' + e.message, 'error');
+    }
+}
+
+function toggleMarkdown(modelKey, runId) {
     const checkbox = document.getElementById('md-toggle-active');
     const bodyEl = document.getElementById('llm-body-active');
-    const raw = llmRawResponses[modelKey] || '';
+    const mdKey = `${modelKey}:${runId}`;
+    const run = (appState.llmRuns[modelKey] || []).find(r => r.run_id === runId);
 
-    mdToggleState[modelKey] = checkbox.checked;
+    mdToggleState[mdKey] = checkbox.checked;
 
     if (checkbox.checked) {
-        bodyEl.innerHTML = marked.parse(raw);
+        bodyEl.innerHTML = marked.parse(run?.response || '');
         bodyEl.className = 'response-body markdown-rendered';
     } else {
-        bodyEl.textContent = raw;
+        bodyEl.textContent = run?.response || '';
         bodyEl.className = 'response-body markdown-raw';
     }
 }
 
-async function downloadResponsePDF(modelKey) {
-    const isRaw = mdToggleState[modelKey] === false;
-
-    const btn = document.querySelector(`button[onclick="downloadResponsePDF('${modelKey}')"]`);
+async function downloadResponsePDF(modelKey, runId) {
+    const mdKey = `${modelKey}:${runId}`;
+    const isRaw = mdToggleState[mdKey] === false;
+    const btn = document.getElementById('btn-llm-pdf');
     if (btn) { btn.disabled = true; btn.textContent = '...'; }
 
     try {
         const res = await fetch('/api/llm/pdf', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model_key: modelKey, is_raw: isRaw })
+            body: JSON.stringify({ model_key: modelKey, run_id: runId, is_raw: isRaw })
         });
 
         if (!res.ok) {
@@ -952,11 +1134,12 @@ async function downloadResponsePDF(modelKey) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${modelKey}_response.pdf`;
+        a.download = `${modelKey}_run${runId}_response.pdf`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+        showToast('PDF downloaded!', 'success');
     } catch (e) {
         showToast('PDF download failed: ' + e.message, 'error');
     } finally {
@@ -968,28 +1151,32 @@ async function downloadResponsePDF(modelKey) {
 function updateRheaModelSelect() {
     const select = document.getElementById('rhea-model-select');
     select.innerHTML = '<option value="">Select a model response...</option>';
-    for (const [key, val] of Object.entries(appState.llmResponses)) {
-        if (val.status === 'success') {
-            select.innerHTML += `<option value="${key}">${val.model}</option>`;
+    for (const [key, runs] of Object.entries(appState.llmRuns)) {
+        for (const run of runs) {
+            if (run.status === 'success') {
+                select.innerHTML += `<option value="${key}:${run.run_id}">${run.model} · Run ${run.run_id} (${run.ts})</option>`;
+            }
         }
     }
 }
 
 async function runRhea() {
-    const modelKey = document.getElementById('rhea-model-select').value;
-    if (!modelKey) {
+    const val = document.getElementById('rhea-model-select').value;
+    if (!val) {
         showToast('Please select a model response to evaluate.', 'warn');
         return;
     }
+    const [modelKey, runIdStr] = val.split(':');
+    const runId = parseInt(runIdStr, 10);
+    const run = (appState.llmRuns[modelKey] || []).find(r => r.run_id === runId);
 
-    const modelName = appState.llmResponses[modelKey]?.model || modelKey;
-    showLoading('Running Rhea evaluation...', `Evaluating ${modelName} response against rubrics`);
+    showLoading('Running Rhea evaluation...', `Evaluating ${run?.model || modelKey} Run ${runId} against rubrics`);
 
     try {
         const res = await fetch('/api/rhea/evaluate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model_key: modelKey })
+            body: JSON.stringify({ model_key: modelKey, run_id: runId })
         });
         const data = await res.json();
 
@@ -998,8 +1185,17 @@ async function runRhea() {
             return;
         }
 
-        appState.rheaResults[modelKey] = data;
-        renderRheaResults();
+        const rheaRunId = data.run_id;
+        appState.rheaRuns.push({
+            run_id: rheaRunId,
+            ts: new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),
+            model_name: data.model_name,
+            model_key: modelKey,
+            llm_run_id: runId,
+            result: data,
+        });
+        appState.activeRheaRun = rheaRunId;
+        renderRheaRunTabs();
     } catch (e) {
         showToast('Rhea evaluation failed: ' + e.message, 'error');
     } finally {
@@ -1008,34 +1204,47 @@ async function runRhea() {
 }
 
 async function runRheaAll() {
-    const keys = Object.entries(appState.llmResponses)
-        .filter(([_, v]) => v.status === 'success')
-        .map(([k, _]) => k);
+    const allRuns = [];
+    for (const [key, runs] of Object.entries(appState.llmRuns)) {
+        const successRuns = runs.filter(r => r.status === 'success');
+        if (successRuns.length > 0) {
+            const latestRun = successRuns[successRuns.length - 1];
+            allRuns.push({ modelKey: key, runId: latestRun.run_id, model: latestRun.model });
+        }
+    }
 
-    if (keys.length === 0) {
+    if (allRuns.length === 0) {
         showToast('No model responses available. Run models first.', 'warn');
         return;
     }
 
-    showLoading('Running Rhea on all models...', `Evaluating ${keys.length} responses`);
+    showLoading('Running Rhea on all models...', `Evaluating ${allRuns.length} responses`);
 
     try {
-        for (const key of keys) {
-            document.getElementById('loading-subtext').textContent =
-                `Evaluating ${appState.llmResponses[key].model}...`;
+        for (const { modelKey, runId, model } of allRuns) {
+            document.getElementById('loading-subtext').textContent = `Evaluating ${model}...`;
 
             const res = await fetch('/api/rhea/evaluate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model_key: key })
+                body: JSON.stringify({ model_key: modelKey, run_id: runId })
             });
             const data = await res.json();
 
             if (!data.error) {
-                appState.rheaResults[key] = data;
+                const rheaRunId = data.run_id;
+                appState.rheaRuns.push({
+                    run_id: rheaRunId,
+                    ts: new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),
+                    model_name: data.model_name,
+                    model_key: modelKey,
+                    llm_run_id: runId,
+                    result: data,
+                });
+                appState.activeRheaRun = rheaRunId;
             }
         }
-        renderRheaResults();
+        renderRheaRunTabs();
     } catch (e) {
         showToast('Rhea evaluation failed: ' + e.message, 'error');
     } finally {
@@ -1043,16 +1252,64 @@ async function runRheaAll() {
     }
 }
 
-function renderRheaResults() {
+function renderRheaRunTabs() {
     const container = document.getElementById('rhea-results');
-    const entries = Object.entries(appState.rheaResults);
+    if (appState.rheaRuns.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>Run models in the "LLM Testing" tab first, then select a response to evaluate against rubrics.</p></div>';
+        const pdfBtn = document.getElementById('btn-rhea-pdf');
+        if (pdfBtn) pdfBtn.classList.add('hidden');
+        return;
+    }
+    if (!appState.activeRheaRun) appState.activeRheaRun = appState.rheaRuns[appState.rheaRuns.length - 1].run_id;
+    const activeRun = appState.rheaRuns.find(r => r.run_id === appState.activeRheaRun);
+    if (!activeRun) return;
 
-    if (entries.length === 0) {
-        container.innerHTML = '<div class="empty-state"><p>No evaluation results yet.</p></div>';
+    let html = _runsBarHtml(
+        appState.rheaRuns.map(r => ({
+            run_id: r.run_id,
+            ts: r.ts,
+            label: `${r.model_name} · Run ${r.llm_run_id}`,
+        })),
+        appState.activeRheaRun,
+        'switchRheaRun',
+        'deleteRheaRunById'
+    );
+    container.innerHTML = html;
+    renderRheaResults(activeRun.result);
+    const pdfBtn = document.getElementById('btn-rhea-pdf');
+    if (pdfBtn) pdfBtn.classList.remove('hidden');
+}
+
+function switchRheaRun(runId) {
+    appState.activeRheaRun = runId;
+    renderRheaRunTabs();
+}
+
+async function deleteRheaRunById(runId) {
+    try {
+        await fetch(`/api/runs/rhea/${runId}`, { method: 'DELETE' });
+        appState.rheaRuns = appState.rheaRuns.filter(r => r.run_id !== runId);
+        if (appState.activeRheaRun === runId) {
+            appState.activeRheaRun = appState.rheaRuns.length ? appState.rheaRuns[appState.rheaRuns.length - 1].run_id : null;
+        }
+        renderRheaRunTabs();
+        showToast('Run deleted.', 'success');
+    } catch (e) {
+        showToast('Delete failed: ' + e.message, 'error');
+    }
+}
+
+function renderRheaResults(resultData) {
+    const container = document.getElementById('rhea-results');
+    // resultData is the result object for the active run
+    const entries = [[resultData?.model_name || 'Model', resultData]];
+
+    if (!resultData) {
+        container.innerHTML += '<div class="empty-state"><p>No evaluation results yet.</p></div>';
         return;
     }
 
-    const isSingle = entries.length === 1;
+    const isSingle = true;
 
     // ── Summary cards (one per model, always shown horizontally) ──────────
     let html = '<div class="rhea-summary-row">';
@@ -1182,15 +1439,12 @@ function renderRheaResults() {
         html += '</tbody></table></div>';
     }
 
-    container.innerHTML = html;
-
-    // Show the PDF download button now that there are results
-    const pdfBtn = document.getElementById('btn-rhea-pdf');
-    if (pdfBtn) pdfBtn.classList.remove('hidden');
+    container.innerHTML += html;
 }
 
 async function downloadRheaPDF() {
-    if (!appState.rheaResults || Object.keys(appState.rheaResults).length === 0) {
+    const activeRheaRun = appState.rheaRuns.find(r => r.run_id === appState.activeRheaRun);
+    if (!activeRheaRun) {
         showToast('No Rhea results to export.', 'warn');
         return;
     }
@@ -1198,11 +1452,15 @@ async function downloadRheaPDF() {
     const btn = document.getElementById('btn-rhea-pdf');
     if (btn) { btn.disabled = true; btn.textContent = '...'; }
 
+    // Build rhea_results dict in the format the PDF generator expects
+    const modelKey = activeRheaRun.model_key || 'model';
+    const rhea_results = { [modelKey]: activeRheaRun.result };
+
     try {
         const res = await fetch('/api/rhea/pdf', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rhea_results: appState.rheaResults })
+            body: JSON.stringify({ rhea_results })
         });
 
         if (!res.ok) {
@@ -1238,8 +1496,13 @@ async function analyzeAdversarial() {
 
     const includeRhea = document.getElementById('adversarial-include-rhea')?.checked;
     const body = {};
-    if (includeRhea && appState.rheaResults && Object.keys(appState.rheaResults).length > 0) {
-        body.rhea_results = appState.rheaResults;
+    if (includeRhea && appState.rheaRuns.length > 0) {
+        // Send the active Rhea run's result
+        const activeRheaRun = appState.rheaRuns.find(r => r.run_id === appState.activeRheaRun)
+            || appState.rheaRuns[appState.rheaRuns.length - 1];
+        if (activeRheaRun) {
+            body.rhea_results = { [activeRheaRun.model_key || 'model']: activeRheaRun.result };
+        }
     } else if (includeRhea) {
         showToast('No Rhea results in this session; analysis runs without them.', 'warn');
     }
