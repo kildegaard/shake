@@ -1,6 +1,8 @@
 import os
 import re
 import uuid
+import json
+from datetime import datetime
 from flask import Flask, request, jsonify, render_template, session
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
@@ -10,6 +12,7 @@ from services.prompt_analyzer import analyze_prompt as _analyze_prompt
 from services.rubric_analyzer import analyze_rubrics as _analyze_rubrics
 from services.llm_runner import run_models as _run_models
 from services.rhea_evaluator import evaluate_response as _evaluate_response
+from services.llm_caller import AVAILABLE_MODELS, DEFAULT_MODELS
 from services.pdf_generator import (
     generate_response_pdf as _generate_pdf,
     generate_rhea_pdf as _generate_rhea_pdf,
@@ -22,6 +25,7 @@ load_dotenv()
 app = Flask(__name__)
 
 ENV_PATH = os.path.join(os.path.dirname(__file__), ".env")
+STORE_PATH = os.path.join(os.path.dirname(__file__), "store_data.json")
 _API_KEY_NAMES = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_AI_API_KEY"]
 
 
@@ -59,8 +63,83 @@ store = {
     "prompt_text": "",
     "context_files": [],
     "rubric_text": "",
-    "llm_responses": {},
+    "analysis_models": dict(DEFAULT_MODELS),
+    "llm_runs": {},       # model_key → list[{run_id, ts, model, status, response, error, warning}]
+    "prompt_runs": [],    # list[{run_id, ts, result}]
+    "rubric_runs": [],    # list[{run_id, ts, result}]
+    "rhea_runs": [],      # list[{run_id, ts, model_key, llm_run_id, model_name, result}]
 }
+
+
+def _ts() -> str:
+    return datetime.now().strftime("%b %d, %H:%M")
+
+
+def _next_run_id(run_list: list) -> int:
+    if not run_list:
+        return 1
+    return max(r["run_id"] for r in run_list) + 1
+
+
+def save_store():
+    data = {
+        "prompt_text": store["prompt_text"],
+        "context_files": store["context_files"],
+        "rubric_text": store["rubric_text"],
+        "analysis_models": store["analysis_models"],
+        "llm_runs": store["llm_runs"],
+        "prompt_runs": store["prompt_runs"],
+        "rubric_runs": store["rubric_runs"],
+        "rhea_runs": store["rhea_runs"],
+    }
+    try:
+        with open(STORE_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[store] Warning: could not save store — {e}")
+
+
+def load_store():
+    if not os.path.exists(STORE_PATH):
+        return
+    try:
+        with open(STORE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        store["prompt_text"] = data.get("prompt_text", "")
+        store["context_files"] = data.get("context_files", [])
+        store["rubric_text"] = data.get("rubric_text", "")
+        stored_models = data.get("analysis_models", {})
+        for k, v in stored_models.items():
+            if k in DEFAULT_MODELS and v in AVAILABLE_MODELS:
+                store["analysis_models"][k] = v
+        store["llm_runs"] = data.get("llm_runs", {})
+        store["prompt_runs"] = data.get("prompt_runs", [])
+        store["rubric_runs"] = data.get("rubric_runs", [])
+        store["rhea_runs"] = data.get("rhea_runs", [])
+    except Exception as e:
+        print(f"[store] Warning: could not load store — {e}")
+
+
+def _status_payload():
+    rubric_count = len(re.findall(r'^\[-?\d+\]', store["rubric_text"], re.MULTILINE)) if store["rubric_text"] else 0
+    return {
+        "prompt_loaded": bool(store["prompt_text"]),
+        "prompt_length": len(store["prompt_text"]),
+        "prompt_text": store["prompt_text"],
+        "context_files_count": len(store["context_files"]),
+        "context_file_names": [f["name"] for f in store["context_files"]],
+        "rubric_loaded": bool(store["rubric_text"]),
+        "rubric_length": len(store["rubric_text"]),
+        "rubric_count": rubric_count,
+        "rubric_text": store["rubric_text"],
+        "llm_runs": store["llm_runs"],
+        "prompt_runs": store["prompt_runs"],
+        "rubric_runs": store["rubric_runs"],
+        "rhea_runs": store["rhea_runs"],
+    }
+
+
+load_store()
 
 
 def extract_text_from_file(filepath: str, filename: str) -> str:
@@ -132,34 +211,15 @@ def upload():
                     "content": content
                 })
 
-    rubric_count = len(re.findall(r'\[\d+\]', store["rubric_text"])) if store["rubric_text"] else 0
-    return jsonify({
-        "status": "ok",
-        "prompt_loaded": bool(store["prompt_text"]),
-        "prompt_length": len(store["prompt_text"]),
-        "context_files_count": len(store["context_files"]),
-        "context_file_names": [f["name"] for f in store["context_files"]],
-        "rubric_loaded": bool(store["rubric_text"]),
-        "rubric_length": len(store["rubric_text"]),
-        "rubric_count": rubric_count,
-    })
+    save_store()
+    payload = _status_payload()
+    payload["status"] = "ok"
+    return jsonify(payload)
 
 
 @app.route("/api/status", methods=["GET"])
 def status():
-    rubric_count = len(re.findall(r'\[\d+\]', store["rubric_text"])) if store["rubric_text"] else 0
-    return jsonify({
-        "prompt_loaded": bool(store["prompt_text"]),
-        "prompt_length": len(store["prompt_text"]),
-        "prompt_preview": store["prompt_text"][:200] if store["prompt_text"] else "",
-        "context_files_count": len(store["context_files"]),
-        "context_file_names": [f["name"] for f in store["context_files"]],
-        "rubric_loaded": bool(store["rubric_text"]),
-        "rubric_length": len(store["rubric_text"]),
-        "rubric_count": rubric_count,
-        "rubric_preview": store["rubric_text"][:200] if store["rubric_text"] else "",
-        "llm_responses": {k: {"model": v["model"], "status": v["status"]} for k, v in store["llm_responses"].items()},
-    })
+    return jsonify(_status_payload())
 
 
 @app.route("/api/analyze/prompt", methods=["POST"])
@@ -168,7 +228,13 @@ def analyze_prompt():
         return jsonify({"error": "No prompt loaded. Please upload a prompt first."}), 400
 
     try:
-        result = _analyze_prompt(store["prompt_text"], store["context_files"] or None)
+        model = store["analysis_models"].get("prompt", DEFAULT_MODELS["prompt"])
+        result = _analyze_prompt(store["prompt_text"], store["context_files"] or None, model=model)
+        result["_model_used"] = model
+        run_id = _next_run_id(store["prompt_runs"])
+        store["prompt_runs"].append({"run_id": run_id, "ts": _ts(), "result": result})
+        save_store()
+        result["run_id"] = run_id
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": f"Prompt analysis failed: {e}"}), 500
@@ -182,7 +248,13 @@ def analyze_rubrics():
         return jsonify({"error": "No prompt loaded. Rubric analysis requires the prompt for coverage gap detection."}), 400
 
     try:
-        result = _analyze_rubrics(store["rubric_text"], store["prompt_text"])
+        model = store["analysis_models"].get("rubric", DEFAULT_MODELS["rubric"])
+        result = _analyze_rubrics(store["rubric_text"], store["prompt_text"], model=model)
+        result["_model_used"] = model
+        run_id = _next_run_id(store["rubric_runs"])
+        store["rubric_runs"].append({"run_id": run_id, "ts": _ts(), "result": result})
+        save_store()
+        result["run_id"] = run_id
         return jsonify(result)
     except Exception as e:
         import traceback
@@ -200,11 +272,26 @@ def run_llm():
 
     results = _run_models(store["prompt_text"], store["context_files"] or None, models)
 
+    ts = _ts()
+    run_ids = {}
     for r in results:
         key = r["model"].lower().replace(" ", "_").replace(".", "")
-        store["llm_responses"][key] = r
+        if key not in store["llm_runs"]:
+            store["llm_runs"][key] = []
+        run_id = _next_run_id(store["llm_runs"][key])
+        store["llm_runs"][key].append({
+            "run_id": run_id,
+            "ts": ts,
+            "model": r["model"],
+            "status": r["status"],
+            "response": r.get("response", ""),
+            "error": r.get("error", ""),
+            "warning": r.get("warning", ""),
+        })
+        run_ids[key] = run_id
 
-    return jsonify({"results": results})
+    save_store()
+    return jsonify({"results": results, "run_ids": run_ids})
 
 
 @app.route("/api/rhea/evaluate", methods=["POST"])
@@ -214,27 +301,45 @@ def rhea_evaluate():
 
     data = request.get_json() or {}
     model_key = data.get("model_key")
+    run_id = data.get("run_id")
     custom_response = data.get("custom_response")
+    llm_run_id = None
 
     if custom_response:
         model_response = custom_response
         model_name = "Custom Response"
-    elif model_key and model_key in store["llm_responses"]:
-        r = store["llm_responses"][model_key]
-        if r["status"] != "success":
-            return jsonify({"error": f"Model response for {r['model']} has errors."}), 400
-        model_response = r["response"]
-        model_name = r["model"]
+    elif model_key:
+        runs = store["llm_runs"].get(model_key, [])
+        if run_id is not None:
+            run = next((r for r in runs if r["run_id"] == run_id), None)
+        else:
+            run = runs[-1] if runs else None
+        if not run:
+            return jsonify({"error": "LLM run not found. Run models first."}), 400
+        if run["status"] != "success":
+            return jsonify({"error": f"Model response for {run['model']} has errors."}), 400
+        model_response = run["response"]
+        model_name = run["model"]
+        llm_run_id = run["run_id"]
     else:
-        available = list(store["llm_responses"].keys())
-        return jsonify({
-            "error": "No model response selected. Provide a model_key or custom_response.",
-            "available_models": available
-        }), 400
+        return jsonify({"error": "No model response selected. Provide a model_key or custom_response."}), 400
 
     try:
-        result = _evaluate_response(model_response, store["rubric_text"])
+        rhea_model = store["analysis_models"].get("rhea", DEFAULT_MODELS["rhea"])
+        result = _evaluate_response(model_response, store["rubric_text"], model=rhea_model)
         result["model_name"] = model_name
+        result["_model_used"] = rhea_model
+        rhea_run_id = _next_run_id(store["rhea_runs"])
+        store["rhea_runs"].append({
+            "run_id": rhea_run_id,
+            "ts": _ts(),
+            "model_key": model_key,
+            "llm_run_id": llm_run_id,
+            "model_name": model_name,
+            "result": result,
+        })
+        save_store()
+        result["run_id"] = rhea_run_id
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": f"Rhea evaluation failed: {e}"}), 500
@@ -244,19 +349,25 @@ def rhea_evaluate():
 def download_pdf():
     data = request.get_json() or {}
     model_key = data.get("model_key")
+    run_id = data.get("run_id")
     is_raw = data.get("is_raw", False)
 
-    if not model_key or model_key not in store["llm_responses"]:
-        return jsonify({"error": "Model response not found."}), 404
+    runs = store["llm_runs"].get(model_key, []) if model_key else []
+    if run_id is not None:
+        run = next((r for r in runs if r["run_id"] == run_id), None)
+    else:
+        run = runs[-1] if runs else None
 
-    r = store["llm_responses"][model_key]
-    if r["status"] != "success":
-        return jsonify({"error": f"Model {r['model']} has errors and cannot be exported."}), 400
+    if not run:
+        return jsonify({"error": "Model response not found. The server may have restarted — re-run the model."}), 404
+
+    if run["status"] != "success":
+        return jsonify({"error": f"Model {run['model']} has errors and cannot be exported."}), 400
 
     try:
-        pdf_bytes = _generate_pdf(r["model"], r["response"], is_raw=is_raw)
+        pdf_bytes = _generate_pdf(run["model"], run["response"], is_raw=is_raw)
         from flask import Response
-        safe_name = model_key.replace(" ", "_")
+        safe_name = f"{model_key}_run{run['run_id']}"
         return Response(
             pdf_bytes,
             mimetype="application/pdf",
@@ -327,6 +438,28 @@ def download_rhea_pdf():
         return jsonify({"error": f"Rhea PDF generation failed: {e}"}), 500
 
 
+@app.route("/api/settings/analysis-models", methods=["GET"])
+def get_analysis_models():
+    return jsonify({
+        "models": store["analysis_models"],
+        "available": {k: v["name"] for k, v in AVAILABLE_MODELS.items()},
+        "defaults": DEFAULT_MODELS,
+    })
+
+
+@app.route("/api/settings/analysis-models", methods=["POST"])
+def save_analysis_models():
+    data = request.get_json() or {}
+    updated = []
+    for task in ["prompt", "rubric", "rhea"]:
+        model_id = data.get(task, "").strip()
+        if model_id and model_id in AVAILABLE_MODELS:
+            store["analysis_models"][task] = model_id
+            updated.append(task)
+    save_store()
+    return jsonify({"status": "ok", "updated": updated, "models": store["analysis_models"]})
+
+
 @app.route("/api/settings/keys", methods=["GET"])
 def get_api_keys():
     result = {}
@@ -351,13 +484,101 @@ def save_api_keys():
     return jsonify({"status": "ok", "updated": updated})
 
 
+@app.route("/api/settings/keys/<key_name>", methods=["DELETE"])
+def delete_api_key(key_name):
+    if key_name not in _API_KEY_NAMES:
+        return jsonify({"error": "Unknown key name"}), 400
+    env = _read_env_file()
+    env.pop(key_name, None)
+    os.environ.pop(key_name, None)
+    _write_env_file(env)
+    result = {}
+    for key in _API_KEY_NAMES:
+        value = os.environ.get(key, "")
+        result[key] = {"set": bool(value), "masked": _mask_key(value)}
+    return jsonify({"status": "ok", "keys": result})
+
+
+@app.route("/api/settings/keys/all", methods=["DELETE"])
+def delete_all_api_keys():
+    env = _read_env_file()
+    for key in _API_KEY_NAMES:
+        env.pop(key, None)
+        os.environ.pop(key, None)
+    _write_env_file(env)
+    result = {key: {"set": False, "masked": ""} for key in _API_KEY_NAMES}
+    return jsonify({"status": "ok", "keys": result})
+
+
+@app.route("/api/runs/llm/<model_key>/<int:run_id>", methods=["DELETE"])
+def delete_llm_run(model_key, run_id):
+    store["llm_runs"][model_key] = [r for r in store["llm_runs"].get(model_key, []) if r["run_id"] != run_id]
+    if not store["llm_runs"].get(model_key):
+        store["llm_runs"].pop(model_key, None)
+    save_store()
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/runs/prompt/<int:run_id>", methods=["DELETE"])
+def delete_prompt_run(run_id):
+    store["prompt_runs"] = [r for r in store["prompt_runs"] if r["run_id"] != run_id]
+    save_store()
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/runs/rubric/<int:run_id>", methods=["DELETE"])
+def delete_rubric_run(run_id):
+    store["rubric_runs"] = [r for r in store["rubric_runs"] if r["run_id"] != run_id]
+    save_store()
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/runs/rhea/<int:run_id>", methods=["DELETE"])
+def delete_rhea_run(run_id):
+    store["rhea_runs"] = [r for r in store["rhea_runs"] if r["run_id"] != run_id]
+    save_store()
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/clear", methods=["POST"])
 def clear():
     store["prompt_text"] = ""
     store["context_files"] = []
     store["rubric_text"] = ""
-    store["llm_responses"] = {}
+    store["llm_runs"] = {}
+    store["prompt_runs"] = []
+    store["rubric_runs"] = []
+    store["rhea_runs"] = []
+    save_store()
     return jsonify({"status": "cleared"})
+
+
+@app.route("/api/clear/prompt", methods=["DELETE"])
+def clear_prompt():
+    store["prompt_text"] = ""
+    save_store()
+    return jsonify(_status_payload())
+
+
+@app.route("/api/clear/rubrics", methods=["DELETE"])
+def clear_rubrics():
+    store["rubric_text"] = ""
+    save_store()
+    return jsonify(_status_payload())
+
+
+@app.route("/api/clear/context", methods=["DELETE"])
+def clear_context_all():
+    store["context_files"] = []
+    save_store()
+    return jsonify(_status_payload())
+
+
+@app.route("/api/clear/context/<path:filename>", methods=["DELETE"])
+def clear_context_file(filename):
+    store["context_files"] = [f for f in store["context_files"] if f["name"] != filename]
+    save_store()
+    return jsonify(_status_payload())
 
 
 if __name__ == "__main__":
