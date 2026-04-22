@@ -111,7 +111,7 @@ def run_gpt(prompt_text: str, context_files: list[dict] = None) -> dict:
         }
 
 
-GEMINI_MODEL = "gemini-2.5-pro"
+GEMINI_MODEL = "gemini-3.1-pro-preview"
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GEMINI_MAX_RETRIES = 2
 
