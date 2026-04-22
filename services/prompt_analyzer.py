@@ -1,6 +1,6 @@
-import anthropic
 import os
 import json
+from services.llm_caller import call_llm, DEFAULT_MODELS
 
 SYSTEM_PROMPT = """You are a strict quality reviewer for the Jupiter Shake crisis management task. Your job is to score an Expert's prompt and tell them exactly what to fix to reach a perfect score.
 
@@ -37,8 +37,8 @@ Rules:
 - Keep each fix string under 20 words."""
 
 
-def analyze_prompt(prompt_text: str, context_files: list[dict] = None) -> dict:
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+def analyze_prompt(prompt_text: str, context_files: list[dict] = None, model: str = None) -> dict:
+    model = model or DEFAULT_MODELS["prompt"]
 
     user_message = f"## Prompt to Analyze\n\n{prompt_text}"
 
@@ -51,14 +51,7 @@ def analyze_prompt(prompt_text: str, context_files: list[dict] = None) -> dict:
                 else f"\n### File: {f['name']}\n{f['content']}\n"
             )
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=2048,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_message}]
-    )
-
-    response_text = response.content[0].text
+    response_text = call_llm(model, SYSTEM_PROMPT, user_message, max_tokens=2048)
 
     try:
         start = response_text.find("{")
