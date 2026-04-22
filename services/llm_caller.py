@@ -11,7 +11,7 @@ AVAILABLE_MODELS = {
     "claude-sonnet-4-6": {"name": "Claude Sonnet 4.6", "provider": "anthropic"},
     "claude-opus-4-6":   {"name": "Claude Opus 4.6",   "provider": "anthropic"},
     "gpt-5.4":           {"name": "GPT 5.4",           "provider": "openai"},
-    "gemini-2.5-pro":    {"name": "Gemini 3.1 Pro",    "provider": "google"},
+    "gemini-3.1-pro-preview": {"name": "Gemini 3.1 Pro", "provider": "google"},
 }
 
 DEFAULT_MODELS = {
