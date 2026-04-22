@@ -1252,36 +1252,62 @@ async function runRheaAll() {
     }
 }
 
+// ── Active inner tab for Rhea results ──
+let activeRheaTab = 'summary';
+
 function renderRheaRunTabs() {
     const container = document.getElementById('rhea-results');
     if (appState.rheaRuns.length === 0) {
         container.innerHTML = '<div class="empty-state"><p>Run models in the "LLM Testing" tab first, then select a response to evaluate against rubrics.</p></div>';
         const pdfBtn = document.getElementById('btn-rhea-pdf');
         if (pdfBtn) pdfBtn.classList.add('hidden');
+        activeRheaTab = 'summary';
         return;
     }
 
-    // Summary section at the top (cards + comparison table when multiple runs)
-    let html = renderRheaSummarySection();
-
-    // Divider before individual detailed results
-    html += `<div class="rhea-detail-divider"><span>Individual Results</span></div>`;
-
-    container.innerHTML = html;
-
-    // Render ALL runs' detailed tables expanded (with Reason column)
+    // Build inner tab bar
+    let tabBar = '<div class="rhea-inner-tabbar" id="rhea-inner-tabbar">';
+    tabBar += `<button class="rhea-inner-tab ${activeRheaTab === 'summary' ? 'rhea-inner-tab-active' : ''}" onclick="switchRheaInnerTab('summary')">Summary</button>`;
     for (const run of appState.rheaRuns) {
-        _appendRheaDetailBlock(run);
+        const label = escapeHtml(run.result?.model_name || run.model_name || run.model_key);
+        const isActive = activeRheaTab === run.run_id;
+        tabBar += `<button class="rhea-inner-tab ${isActive ? 'rhea-inner-tab-active' : ''}" onclick="switchRheaInnerTab('${run.run_id}')">${label}</button>`;
     }
+    tabBar += '</div>';
+
+    // Build panels
+    let summaryPanel = `<div class="rhea-inner-panel ${activeRheaTab === 'summary' ? '' : 'hidden'}" id="rhea-panel-summary">`;
+    summaryPanel += renderRheaSummarySection();
+    summaryPanel += '</div>';
+
+    let modelPanels = '';
+    for (const run of appState.rheaRuns) {
+        const isActive = activeRheaTab === run.run_id;
+        modelPanels += `<div class="rhea-inner-panel ${isActive ? '' : 'hidden'}" id="rhea-panel-${run.run_id}">`;
+        modelPanels += _buildRheaDetailHtml(run);
+        modelPanels += '</div>';
+    }
+
+    container.innerHTML = tabBar + summaryPanel + modelPanels;
 
     const pdfBtn = document.getElementById('btn-rhea-pdf');
     if (pdfBtn) pdfBtn.classList.remove('hidden');
 }
 
-function _appendRheaDetailBlock(run) {
-    const container = document.getElementById('rhea-results');
+function switchRheaInnerTab(tabId) {
+    activeRheaTab = tabId;
+    // Toggle panels
+    document.querySelectorAll('.rhea-inner-panel').forEach(p => p.classList.add('hidden'));
+    const target = tabId === 'summary' ? document.getElementById('rhea-panel-summary') : document.getElementById(`rhea-panel-${tabId}`);
+    if (target) target.classList.remove('hidden');
+    // Toggle tab buttons
+    document.querySelectorAll('.rhea-inner-tab').forEach(btn => btn.classList.remove('rhea-inner-tab-active'));
+    event?.currentTarget?.classList.add('rhea-inner-tab-active');
+}
+
+function _buildRheaDetailHtml(run) {
     const data = run.result;
-    if (!data) return;
+    if (!data) return '';
 
     const summary = data.summary || {};
     const total      = summary.total || 0;
@@ -1293,7 +1319,6 @@ function _appendRheaDetailBlock(run) {
     const penaltyPts = summary.penalty_points ?? 0;
     const primaryRate  = max > 0 ? pointsRate : (summary.pass_rate || 0);
     const primaryColor = primaryRate >= 80 ? '#16a34a' : primaryRate >= 50 ? '#ca8a04' : '#dc2626';
-
     const penaltyBadge = penaltyPts < 0
         ? `<span class="rhea-penalty-badge">${penaltyPts} pts penalty</span>`
         : '';
@@ -1306,7 +1331,9 @@ function _appendRheaDetailBlock(run) {
                     <span class="rhea-detail-block-meta">Run ${run.llm_run_id} &nbsp;·&nbsp; ${run.ts || ''}</span>
                 </div>
                 <div class="rhea-detail-block-stats">
-                    <span class="text-gray-500 text-xs">${total} criteria &nbsp;·&nbsp; <span class="text-green-600 font-medium">${passed} passed</span> &nbsp;·&nbsp; <span class="text-red-600 font-medium">${failed} failed</span></span>
+                    <span class="text-gray-500 text-xs">${total} criteria &nbsp;·&nbsp;
+                        <span class="text-green-600 font-medium">${passed} passed</span> &nbsp;·&nbsp;
+                        <span class="text-red-600 font-medium">${failed} failed</span></span>
                     &nbsp;
                     <span class="font-semibold text-gray-700 text-sm">${scored}/${max} pts</span>
                     <span style="color:${primaryColor}" class="font-bold text-sm">&nbsp;${primaryRate}%</span>
@@ -1316,14 +1343,12 @@ function _appendRheaDetailBlock(run) {
             </div>
             <div class="overflow-x-auto">
                 <table class="eval-table">
-                    <thead>
-                        <tr>
-                            <th>Criteria</th>
-                            <th class="rhea-th-pts">Pts</th>
-                            <th class="rhea-th-status">Status</th>
-                            <th>Reason</th>
-                        </tr>
-                    </thead>
+                    <thead><tr>
+                        <th>Criteria</th>
+                        <th class="rhea-th-pts">Pts</th>
+                        <th class="rhea-th-status">Status</th>
+                        <th>Reason</th>
+                    </tr></thead>
                     <tbody>`;
 
     for (const ev of (data.evaluations || [])) {
@@ -1335,9 +1360,8 @@ function _appendRheaDetailBlock(run) {
             : effectivePts < 0 ? `<span class="text-red-600 font-semibold">${effectivePts}</span>`
             : effectivePts > 0 ? `<span class="text-green-700 font-semibold">+${effectivePts}</span>`
             : `<span class="text-gray-400">0</span>`;
-        const rowClass = isNegRubric ? 'rhea-row-negative' : '';
         html += `
-            <tr class="${rowClass}">
+            <tr class="${isNegRubric ? 'rhea-row-negative' : ''}">
                 <td class="text-gray-700">${escapeHtml(ev.criteria)}</td>
                 <td class="text-center text-xs font-medium">${ptsDisplay}</td>
                 <td><span class="${badge}">${ev.status}</span></td>
@@ -1346,7 +1370,7 @@ function _appendRheaDetailBlock(run) {
     }
 
     html += '</tbody></table></div></div>';
-    container.innerHTML += html;
+    return html;
 }
 
 function renderRheaSummarySection() {
@@ -1479,18 +1503,12 @@ function renderRheaComparisonTable(runs) {
     return html;
 }
 
-function switchRheaRun(runId) {
-    appState.activeRheaRun = runId;
-    renderRheaRunTabs();
-}
-
 async function deleteRheaRunById(runId) {
     try {
         await fetch(`/api/runs/rhea/${runId}`, { method: 'DELETE' });
         appState.rheaRuns = appState.rheaRuns.filter(r => r.run_id !== runId);
-        if (appState.activeRheaRun === runId) {
-            appState.activeRheaRun = appState.rheaRuns.length ? appState.rheaRuns[appState.rheaRuns.length - 1].run_id : null;
-        }
+        // If the deleted tab was active, go back to Summary
+        if (activeRheaTab === runId) activeRheaTab = 'summary';
         renderRheaRunTabs();
         showToast('Run deleted.', 'success');
     } catch (e) {
@@ -1498,148 +1516,6 @@ async function deleteRheaRunById(runId) {
     }
 }
 
-function renderRheaResults(resultData) {
-    const container = document.getElementById('rhea-results');
-    // resultData is the result object for the active run
-    const entries = [[resultData?.model_name || 'Model', resultData]];
-
-    if (!resultData) {
-        container.innerHTML += '<div class="empty-state"><p>No evaluation results yet.</p></div>';
-        return;
-    }
-
-    const isSingle = true;
-
-    // ── Summary cards (one per model, always shown horizontally) ──────────
-    let html = '<div class="rhea-summary-row">';
-    for (const [key, data] of entries) {
-        const summary = data.summary || {};
-        const total = summary.total || 0;
-        const passed = summary.passed || 0;
-        const failed = summary.failed || 0;
-        const passRate     = summary.pass_rate     || 0;
-        const scored       = summary.scored_points  ?? 0;
-        const max          = summary.max_points     || 0;
-        const pointsRate   = summary.points_rate    ?? 0;
-        const penaltyPts   = summary.penalty_points ?? 0;
-        const penaltyMax   = summary.penalty_max    ?? 0;
-
-        const primaryRate  = max > 0 ? pointsRate : passRate;
-        const primaryColor = primaryRate >= 80 ? 'text-green-600' : primaryRate >= 50 ? 'text-yellow-600' : 'text-red-600';
-
-        const penaltyBadge = penaltyPts < 0
-            ? `<span class="rhea-penalty-badge" title="Penalties from failed negative rubrics">${penaltyPts} pts penalty</span>`
-            : '';
-
-        html += `
-            <div class="rhea-summary-card">
-                <div class="result-card-header">
-                    <h3 class="font-semibold text-gray-800">${escapeHtml(data.model_name || key)}</h3>
-                    <div class="flex items-center gap-2">
-                        ${penaltyBadge}
-                        <span class="${primaryColor} text-sm font-bold">${primaryRate}% score</span>
-                    </div>
-                </div>
-                <div class="rhea-stats-row">
-                    <div class="summary-stat">
-                        <div class="value text-gray-800">${total}</div>
-                        <span class="label">Criteria</span>
-                    </div>
-                    <div class="summary-stat">
-                        <div class="value text-green-600">${passed}</div>
-                        <span class="label">Passed</span>
-                    </div>
-                    <div class="summary-stat">
-                        <div class="value text-red-600">${failed}</div>
-                        <span class="label">Failed</span>
-                    </div>
-                    <div class="rhea-points-stat">
-                        <span class="rhea-points-value" title="Max achievable: ${max} pts${penaltyMax < 0 ? ' | Max penalty: ' + penaltyMax + ' pts' : ''}">${scored} / ${max} pts</span>
-                        <span class="rhea-points-pct" title="Criteria count pass rate: ${passRate}%">${pointsRate}%</span>
-                    </div>
-                </div>
-            </div>`;
-    }
-    html += '</div>';
-
-    // ── Evaluation table ───────────────────────────────────────────────────
-    if (isSingle) {
-        // Single model: Criteria | Pts | Status | Reason
-        const [key, data] = entries[0];
-        html += `
-            <div class="overflow-x-auto mt-4">
-                <table class="eval-table">
-                    <thead>
-                        <tr>
-                            <th>Criteria</th>
-                            <th class="rhea-th-pts">Pts</th>
-                            <th class="rhea-th-status">Status</th>
-                            <th>Reason</th>
-                        </tr>
-                    </thead>
-                    <tbody>`;
-        for (const ev of (data.evaluations || [])) {
-            const badge = ev.status === 'PASS' ? 'badge-pass' : 'badge-fail';
-            const pts = ev.points ?? 0;
-            const isNegRubric = pts < 0;
-            // Effective contribution: PASS always applies pts (neg rubric PASS = penalty)
-            const effectivePts = ev.status === 'PASS' ? pts : 0;
-            const ptsDisplay = pts === 0 && !isNegRubric ? '—'
-                : effectivePts < 0 ? `<span class="text-red-600 font-semibold">${effectivePts}</span>`
-                : effectivePts > 0 ? `<span class="text-green-700 font-semibold">+${effectivePts}</span>`
-                : `<span class="text-gray-400">0</span>`;
-            const rowClass = isNegRubric ? 'rhea-row-negative' : '';
-            html += `
-                <tr class="${rowClass}">
-                    <td class="text-gray-700">${escapeHtml(ev.criteria)}</td>
-                    <td class="text-center text-xs font-medium">${ptsDisplay}</td>
-                    <td><span class="${badge}">${ev.status}</span></td>
-                    <td class="text-gray-500 text-xs rhea-reason-cell">${escapeHtml(ev.reason || '—')}</td>
-                </tr>`;
-        }
-        html += '</tbody></table></div>';
-    } else {
-        // Multi-model: unified table aligned by row index
-        // Columns: Criteria | Pts | [Model1 Status | Reason] | [Model2 Status | Reason] ...
-        const maxRows = Math.max(...entries.map(([, d]) => (d.evaluations || []).length));
-
-        html += '<div class="overflow-x-auto mt-4"><table class="eval-table rhea-multi-table"><thead><tr>';
-        html += '<th class="rhea-th-criteria">Criteria</th>';
-        html += '<th class="rhea-th-pts">Pts</th>';
-        for (const [, data] of entries) {
-            const name = escapeHtml(data.model_name || '');
-            html += `<th class="rhea-th-status">${name}</th><th class="rhea-th-reason">Reason</th>`;
-        }
-        html += '</tr></thead><tbody>';
-
-        for (let i = 0; i < maxRows; i++) {
-            // Use first model's criteria text as the shared criteria label
-            const firstEv = (entries[0][1].evaluations || [])[i];
-            const criteriaText = firstEv ? escapeHtml(firstEv.criteria) : '—';
-            const pts = firstEv ? (firstEv.points ?? '') : '';
-
-            html += `<tr>
-                <td class="text-gray-700 rhea-criteria-cell">${criteriaText}</td>
-                <td class="text-center text-gray-500 text-xs font-medium">${pts}</td>`;
-
-            for (const [, data] of entries) {
-                const ev = (data.evaluations || [])[i];
-                if (ev) {
-                    const badge = ev.status === 'PASS' ? 'badge-pass' : 'badge-fail';
-                    html += `<td class="text-center"><span class="${badge}">${ev.status}</span></td>
-                             <td class="text-gray-500 text-xs rhea-reason-cell">${escapeHtml(ev.reason || '—')}</td>`;
-                } else {
-                    html += '<td>—</td><td>—</td>';
-                }
-            }
-            html += '</tr>';
-        }
-
-        html += '</tbody></table></div>';
-    }
-
-    container.innerHTML += html;
-}
 
 async function downloadRheaPDF() {
     if (appState.rheaRuns.length === 0) {
@@ -1828,6 +1704,19 @@ async function applyHardenedRubrics() {
 }
 
 // ─── System Prompts Manager ───────────────────────────────────────────────────
+
+function openSystemPromptsPanel() {
+    document.getElementById('sp-panel-overlay').style.display = 'flex';
+    loadSystemPrompts();
+}
+
+function closeSystemPromptsPanel() {
+    document.getElementById('sp-panel-overlay').style.display = 'none';
+}
+
+function handleSpPanelOverlayClick(e) {
+    if (e.target === document.getElementById('sp-panel-overlay')) closeSystemPromptsPanel();
+}
 
 let spData = {};   // { service_key: { label, active_id, prompts[] } }
 let spExpandedService = null;
