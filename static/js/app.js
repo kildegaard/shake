@@ -675,7 +675,7 @@ async function downloadPromptPDF() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'prompt_analysis.pdf';
+        a.download = `prompt_analysis_${_dlTimestamp()}.pdf`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -883,7 +883,7 @@ async function downloadRubricPDF() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'rubric_analysis.pdf';
+        a.download = `rubric_analysis_${_dlTimestamp()}.pdf`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -1134,7 +1134,7 @@ async function downloadResponsePDF(modelKey, runId) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${modelKey}_run${runId}_response.pdf`;
+        a.download = `${modelKey}_run${runId}_response_${_dlTimestamp()}.pdf`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -1260,31 +1260,93 @@ function renderRheaRunTabs() {
         if (pdfBtn) pdfBtn.classList.add('hidden');
         return;
     }
-    if (!appState.activeRheaRun) appState.activeRheaRun = appState.rheaRuns[appState.rheaRuns.length - 1].run_id;
-    const activeRun = appState.rheaRuns.find(r => r.run_id === appState.activeRheaRun);
-    if (!activeRun) return;
 
-    // Summary section at the top (always shown, with comparison table when multiple runs)
+    // Summary section at the top (cards + comparison table when multiple runs)
     let html = renderRheaSummarySection();
 
-    // Divider before individual results
+    // Divider before individual detailed results
     html += `<div class="rhea-detail-divider"><span>Individual Results</span></div>`;
 
-    // Run tabs for individual detail view
-    html += _runsBarHtml(
-        appState.rheaRuns.map(r => ({
-            run_id: r.run_id,
-            ts: r.ts,
-            label: `${r.model_name} · Run ${r.llm_run_id}`,
-        })),
-        appState.activeRheaRun,
-        'switchRheaRun',
-        'deleteRheaRunById'
-    );
     container.innerHTML = html;
-    renderRheaResults(activeRun.result);
+
+    // Render ALL runs' detailed tables expanded (with Reason column)
+    for (const run of appState.rheaRuns) {
+        _appendRheaDetailBlock(run);
+    }
+
     const pdfBtn = document.getElementById('btn-rhea-pdf');
     if (pdfBtn) pdfBtn.classList.remove('hidden');
+}
+
+function _appendRheaDetailBlock(run) {
+    const container = document.getElementById('rhea-results');
+    const data = run.result;
+    if (!data) return;
+
+    const summary = data.summary || {};
+    const total      = summary.total || 0;
+    const passed     = summary.passed || 0;
+    const failed     = summary.failed || 0;
+    const scored     = summary.scored_points ?? 0;
+    const max        = summary.max_points || 0;
+    const pointsRate = summary.points_rate ?? 0;
+    const penaltyPts = summary.penalty_points ?? 0;
+    const primaryRate  = max > 0 ? pointsRate : (summary.pass_rate || 0);
+    const primaryColor = primaryRate >= 80 ? '#16a34a' : primaryRate >= 50 ? '#ca8a04' : '#dc2626';
+
+    const penaltyBadge = penaltyPts < 0
+        ? `<span class="rhea-penalty-badge">${penaltyPts} pts penalty</span>`
+        : '';
+
+    let html = `
+        <div class="rhea-detail-block">
+            <div class="rhea-detail-block-header">
+                <div class="rhea-detail-block-title">
+                    <span class="font-semibold text-gray-800">${escapeHtml(data.model_name || run.model_name || run.model_key)}</span>
+                    <span class="rhea-detail-block-meta">Run ${run.llm_run_id} &nbsp;·&nbsp; ${run.ts || ''}</span>
+                </div>
+                <div class="rhea-detail-block-stats">
+                    <span class="text-gray-500 text-xs">${total} criteria &nbsp;·&nbsp; <span class="text-green-600 font-medium">${passed} passed</span> &nbsp;·&nbsp; <span class="text-red-600 font-medium">${failed} failed</span></span>
+                    &nbsp;
+                    <span class="font-semibold text-gray-700 text-sm">${scored}/${max} pts</span>
+                    <span style="color:${primaryColor}" class="font-bold text-sm">&nbsp;${primaryRate}%</span>
+                    ${penaltyBadge}
+                    <button class="rhea-detail-delete-btn" onclick="deleteRheaRunById('${run.run_id}')" title="Delete this run">✕</button>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="eval-table">
+                    <thead>
+                        <tr>
+                            <th>Criteria</th>
+                            <th class="rhea-th-pts">Pts</th>
+                            <th class="rhea-th-status">Status</th>
+                            <th>Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+
+    for (const ev of (data.evaluations || [])) {
+        const badge = ev.status === 'PASS' ? 'badge-pass' : 'badge-fail';
+        const pts = ev.points ?? 0;
+        const isNegRubric = pts < 0;
+        const effectivePts = ev.status === 'PASS' ? pts : 0;
+        const ptsDisplay = pts === 0 && !isNegRubric ? '—'
+            : effectivePts < 0 ? `<span class="text-red-600 font-semibold">${effectivePts}</span>`
+            : effectivePts > 0 ? `<span class="text-green-700 font-semibold">+${effectivePts}</span>`
+            : `<span class="text-gray-400">0</span>`;
+        const rowClass = isNegRubric ? 'rhea-row-negative' : '';
+        html += `
+            <tr class="${rowClass}">
+                <td class="text-gray-700">${escapeHtml(ev.criteria)}</td>
+                <td class="text-center text-xs font-medium">${ptsDisplay}</td>
+                <td><span class="${badge}">${ev.status}</span></td>
+                <td class="text-gray-500 text-xs rhea-reason-cell">${escapeHtml(ev.reason || '—')}</td>
+            </tr>`;
+    }
+
+    html += '</tbody></table></div></div>';
+    container.innerHTML += html;
 }
 
 function renderRheaSummarySection() {
@@ -1611,7 +1673,7 @@ async function downloadRheaPDF() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'rhea_evaluation.pdf';
+        a.download = `rhea_evaluation_${_dlTimestamp()}.pdf`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -2010,6 +2072,12 @@ async function spSaveModal() {
 }
 
 // ─── Utilities ───
+function _dlTimestamp() {
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
+
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
