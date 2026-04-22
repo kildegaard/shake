@@ -1264,7 +1264,14 @@ function renderRheaRunTabs() {
     const activeRun = appState.rheaRuns.find(r => r.run_id === appState.activeRheaRun);
     if (!activeRun) return;
 
-    let html = _runsBarHtml(
+    // Summary section at the top (always shown, with comparison table when multiple runs)
+    let html = renderRheaSummarySection();
+
+    // Divider before individual results
+    html += `<div class="rhea-detail-divider"><span>Individual Results</span></div>`;
+
+    // Run tabs for individual detail view
+    html += _runsBarHtml(
         appState.rheaRuns.map(r => ({
             run_id: r.run_id,
             ts: r.ts,
@@ -1278,6 +1285,136 @@ function renderRheaRunTabs() {
     renderRheaResults(activeRun.result);
     const pdfBtn = document.getElementById('btn-rhea-pdf');
     if (pdfBtn) pdfBtn.classList.remove('hidden');
+}
+
+function renderRheaSummarySection() {
+    const runs = appState.rheaRuns;
+    if (runs.length === 0) return '';
+
+    let html = '<div class="rhea-summary-section">';
+
+    if (runs.length > 1) {
+        html += '<div class="rhea-comparison-header">';
+        html += '<h3 class="rhea-comparison-title">Summary — All Models</h3>';
+        html += '</div>';
+    }
+
+    // Side-by-side summary cards for all runs
+    html += '<div class="rhea-summary-row">';
+    for (const run of runs) {
+        const summary = run.result?.summary || {};
+        const total      = summary.total || 0;
+        const passed     = summary.passed || 0;
+        const failed     = summary.failed || 0;
+        const passRate   = summary.pass_rate || 0;
+        const scored     = summary.scored_points ?? 0;
+        const max        = summary.max_points || 0;
+        const pointsRate = summary.points_rate ?? 0;
+        const penaltyPts = summary.penalty_points ?? 0;
+        const penaltyMax = summary.penalty_max ?? 0;
+
+        const primaryRate  = max > 0 ? pointsRate : passRate;
+        const primaryColor = primaryRate >= 80 ? 'text-green-600' : primaryRate >= 50 ? 'text-yellow-600' : 'text-red-600';
+
+        const penaltyBadge = penaltyPts < 0
+            ? `<span class="rhea-penalty-badge" title="Penalties from failed negative rubrics">${penaltyPts} pts penalty</span>`
+            : '';
+
+        html += `
+            <div class="rhea-summary-card">
+                <div class="result-card-header">
+                    <h3 class="font-semibold text-gray-800">${escapeHtml(run.result?.model_name || run.model_name || run.model_key)}</h3>
+                    <div class="flex items-center gap-2">
+                        ${penaltyBadge}
+                        <span class="${primaryColor} text-sm font-bold">${primaryRate}% score</span>
+                    </div>
+                </div>
+                <div class="rhea-stats-row">
+                    <div class="summary-stat">
+                        <div class="value text-gray-800">${total}</div>
+                        <span class="label">Criteria</span>
+                    </div>
+                    <div class="summary-stat">
+                        <div class="value text-green-600">${passed}</div>
+                        <span class="label">Passed</span>
+                    </div>
+                    <div class="summary-stat">
+                        <div class="value text-red-600">${failed}</div>
+                        <span class="label">Failed</span>
+                    </div>
+                    <div class="rhea-points-stat">
+                        <span class="rhea-points-value" title="Max achievable: ${max} pts${penaltyMax < 0 ? ' | Max penalty: ' + penaltyMax + ' pts' : ''}">${scored} / ${max} pts</span>
+                        <span class="rhea-points-pct" title="Criteria count pass rate: ${passRate}%">${pointsRate}%</span>
+                    </div>
+                </div>
+            </div>`;
+    }
+    html += '</div>';
+
+    // Comparison table (only when there are multiple runs)
+    if (runs.length > 1) {
+        html += renderRheaComparisonTable(runs);
+    }
+
+    html += '</div>';
+    return html;
+}
+
+function renderRheaComparisonTable(runs) {
+    const maxRows = Math.max(...runs.map(r => (r.result?.evaluations || []).length));
+    if (maxRows === 0) return '';
+
+    let html = '<div class="overflow-x-auto mt-4">';
+    html += '<table class="eval-table rhea-multi-table rhea-comparison-table">';
+    html += '<thead><tr>';
+    html += '<th class="rhea-th-criteria">Criteria</th>';
+    html += '<th class="rhea-th-pts">Pts</th>';
+    for (const run of runs) {
+        html += `<th class="rhea-th-status">${escapeHtml(run.result?.model_name || run.model_name || run.model_key)}</th>`;
+    }
+    html += '</tr></thead>';
+    html += '<tbody>';
+
+    for (let i = 0; i < maxRows; i++) {
+        const firstEv = (runs[0].result?.evaluations || [])[i];
+        const pts = firstEv?.points ?? 0;
+        const isNegRubric = pts < 0;
+        const rowClass = isNegRubric ? 'rhea-row-negative' : '';
+        const ptsDisplay = pts === 0 && !isNegRubric ? '—'
+            : pts < 0 ? `<span class="text-red-600 font-semibold">${pts}</span>`
+            : `<span class="text-green-700 font-semibold">+${pts}</span>`;
+
+        html += `<tr class="${rowClass}">`;
+        html += `<td class="text-gray-700 rhea-criteria-cell">${escapeHtml(firstEv?.criteria || '—')}</td>`;
+        html += `<td class="text-center text-xs font-medium">${ptsDisplay}</td>`;
+
+        for (const run of runs) {
+            const ev = (run.result?.evaluations || [])[i];
+            if (ev) {
+                const badge = ev.status === 'PASS' ? 'badge-pass' : 'badge-fail';
+                html += `<td class="text-center"><span class="${badge}">${ev.status}</span></td>`;
+            } else {
+                html += '<td class="text-center text-gray-400">—</td>';
+            }
+        }
+        html += '</tr>';
+    }
+
+    // Totals row
+    html += '<tr class="rhea-totals-row">';
+    html += `<td colspan="2" class="font-semibold text-gray-700 text-sm">Total Score</td>`;
+    for (const run of runs) {
+        const summary = run.result?.summary || {};
+        const scored = summary.scored_points ?? 0;
+        const max    = summary.max_points || 0;
+        const rate   = summary.points_rate ?? 0;
+        const colorClass = rate >= 80 ? 'text-green-600' : rate >= 50 ? 'text-yellow-600' : 'text-red-600';
+        html += `<td class="text-center font-bold ${colorClass} text-sm">${scored}/${max}<br><span class="text-xs">${rate}%</span></td>`;
+    }
+    html += '</tr>';
+
+    html += '</tbody></table></div>';
+    return html;
 }
 
 function switchRheaRun(runId) {
@@ -1443,8 +1580,7 @@ function renderRheaResults(resultData) {
 }
 
 async function downloadRheaPDF() {
-    const activeRheaRun = appState.rheaRuns.find(r => r.run_id === appState.activeRheaRun);
-    if (!activeRheaRun) {
+    if (appState.rheaRuns.length === 0) {
         showToast('No Rhea results to export.', 'warn');
         return;
     }
@@ -1452,9 +1588,12 @@ async function downloadRheaPDF() {
     const btn = document.getElementById('btn-rhea-pdf');
     if (btn) { btn.disabled = true; btn.textContent = '...'; }
 
-    // Build rhea_results dict in the format the PDF generator expects
-    const modelKey = activeRheaRun.model_key || 'model';
-    const rhea_results = { [modelKey]: activeRheaRun.result };
+    // Build rhea_results with ALL runs (deduplicated by model_key, last run wins)
+    const rhea_results = {};
+    for (const run of appState.rheaRuns) {
+        const key = run.model_key || run.run_id;
+        rhea_results[key] = run.result;
+    }
 
     try {
         const res = await fetch('/api/rhea/pdf', {
