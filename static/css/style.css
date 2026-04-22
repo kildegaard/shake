@@ -888,6 +888,49 @@
     margin-top: 2px;
 }
 
+/* ── Rhea Summary Section ────────────────────────────────────────────────── */
+.rhea-summary-section {
+    margin-bottom: 20px;
+}
+.rhea-comparison-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.rhea-comparison-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #1f2937;
+}
+.rhea-detail-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 20px 0 14px;
+    color: #9ca3af;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.rhea-detail-divider::before,
+.rhea-detail-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #e5e7eb;
+}
+.rhea-totals-row td {
+    background: #eef2ff !important;
+    border-top: 2px solid #4263eb !important;
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+}
+.rhea-comparison-table .rhea-totals-row {
+    font-weight: 700;
+}
+
 /* Multi-model table column widths */
 .rhea-multi-table .rhea-th-criteria,
 .rhea-multi-table .rhea-criteria-cell {

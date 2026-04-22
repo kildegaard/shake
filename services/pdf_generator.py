@@ -800,7 +800,8 @@ def generate_rhea_pdf(rhea_results: dict) -> bytes:
     elements.append(Spacer(1, 6 * mm))
 
     # ── Evaluation table ─────────────────────────────────────────────────────
-    elements.append(Paragraph("Detailed Evaluation", styles["h2"]))
+    section_title = "Comparison Table" if not is_single else "Detailed Evaluation"
+    elements.append(Paragraph(section_title, styles["h2"]))
     elements.append(Spacer(1, 3 * mm))
 
     PASS_COLOR = colors.HexColor("#dcfce7")
@@ -903,16 +904,15 @@ def generate_rhea_pdf(rhea_results: dict) -> bytes:
         elements.append(tbl)
 
     else:
-        # Multi-model table
+        # Multi-model summary table: No Reason column, one Status column per model
         max_rows = max(len(d.get("evaluations", [])) for _, d in entries)
         model_names = [d.get("model_name", k) for k, d in entries]
 
         col_num      = 10 * mm
-        col_criteria = 48 * mm
-        col_pts      = 9 * mm
-        per_model_w  = (page_width - col_num - col_criteria - col_pts) / len(entries)
-        col_status   = per_model_w * 0.32
-        col_reason   = per_model_w * 0.68
+        col_criteria = 65 * mm
+        col_pts      = 10 * mm
+        remaining_w  = page_width - col_num - col_criteria - col_pts
+        col_status_w = remaining_w / len(entries)
 
         header_row = [
             Paragraph("No.", header_style),
@@ -920,17 +920,14 @@ def generate_rhea_pdf(rhea_results: dict) -> bytes:
             Paragraph("Pts", header_style),
         ]
         for name in model_names:
-            header_row += [
-                Paragraph(_escape_xml(name), header_style),
-                Paragraph("Reason", header_style),
-            ]
+            header_row.append(Paragraph(_escape_xml(name), header_style))
 
-        col_widths = [col_num, col_criteria, col_pts]
-        for _ in entries:
-            col_widths += [col_status, col_reason]
+        col_widths = [col_num, col_criteria, col_pts] + [col_status_w] * len(entries)
 
         num_style_m = ParagraphStyle("num_sm_m", fontName="Helvetica-Bold", fontSize=7.5,
                                      leading=10, textColor=GRAY_700, alignment=1)
+        total_style = ParagraphStyle("total_lbl", fontName="Helvetica-Bold", fontSize=9,
+                                     leading=12, textColor=GRAY_800)
 
         table_data = [header_row]
         row_colors = [("BACKGROUND", (0, 0), (-1, 0), BRAND)]
@@ -943,13 +940,10 @@ def generate_rhea_pdf(rhea_results: dict) -> bytes:
 
             rubric_label, criteria_text = _split_rubric_label(raw_criteria)
 
-            # Effective pts based on first model's evaluation status
-            first_is_pass = (first_ev.get("status") == "PASS") if first_ev else False
-            eff_pts = raw_pts if first_is_pass else 0
-            if eff_pts < 0:
-                pts_text = str(eff_pts)
-            elif eff_pts > 0:
-                pts_text = f"+{eff_pts}"
+            if raw_pts < 0:
+                pts_text = str(raw_pts)
+            elif raw_pts > 0:
+                pts_text = f"+{raw_pts}"
             else:
                 pts_text = "0" if is_neg else "—"
 
@@ -978,24 +972,46 @@ def generate_rhea_pdf(rhea_results: dict) -> bytes:
                         f'{_escape_xml(ev.get("status", ""))}</font>',
                         body_sm
                     )
-                    row += [status_para, Paragraph(_escape_xml(ev.get("reason", "—")), reason_sm)]
+                    row.append(status_para)
                 else:
-                    row += [Paragraph("—", body_sm), Paragraph("—", reason_sm)]
-                col_idx += 2
+                    row.append(Paragraph("—", body_sm))
+                col_idx += 1
 
             table_data.append(row)
+
+        # Totals row
+        totals_row = [
+            Paragraph("", body_sm),
+            Paragraph("Total Score", total_style),
+            Paragraph("", body_sm),
+        ]
+        total_row_idx = len(table_data)
+        for _, data in entries:
+            s = data.get("summary", {})
+            scored   = s.get("scored_points", 0)
+            max_pts  = s.get("max_points", 0)
+            pts_rate = s.get("points_rate", 0)
+            rate_color = "#16a34a" if pts_rate >= 80 else "#ca8a04" if pts_rate >= 50 else "#dc2626"
+            totals_row.append(Paragraph(
+                f'<font name="Helvetica-Bold" color="{rate_color}">{scored}/{max_pts}</font>'
+                f'<br/><font size="7" color="{rate_color}">({pts_rate}%)</font>',
+                body_sm
+            ))
+        table_data.append(totals_row)
+        row_colors.append(("BACKGROUND", (0, total_row_idx), (-1, total_row_idx), colors.HexColor("#eef2ff")))
+        row_colors.append(("LINEABOVE",  (0, total_row_idx), (-1, total_row_idx), 1.2, BRAND))
 
         tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
         style_cmds = [
             ("GRID",          (0, 0), (-1, -1), 0.4, GRAY_200),
-            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING",   (0, 0), (-1, -1), 4),
             ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
             ("TOPPADDING",    (0, 0), (-1, -1), 4),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
             ("ALIGN",         (0, 0), (0, -1), "CENTER"),
-            ("ALIGN",         (2, 0), (2, -1), "CENTER"),
+            ("ALIGN",         (2, 0), (-1, -1), "CENTER"),
         ] + row_colors
         tbl.setStyle(TableStyle(style_cmds))
         elements.append(tbl)
