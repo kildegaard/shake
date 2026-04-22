@@ -244,6 +244,43 @@
     </div>
 
     <main class="max-w-7xl mx-auto px-6 py-6">
+
+        <!-- Expert Profiles Bar -->
+        <div id="expert-bar" class="expert-bar mb-5">
+            <div class="expert-bar-left">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 shrink-0"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <span class="expert-bar-label">Expert</span>
+                <div id="expert-chips" class="expert-chips"></div>
+            </div>
+            <button onclick="openAddExpertModal()" class="expert-add-btn" title="Add expert">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add Expert
+            </button>
+        </div>
+
+        <!-- Expert Modal (Add / Rename) -->
+        <div id="expert-modal" class="expert-modal-overlay" style="display:none;" onclick="expertModalBackdropClick(event)">
+            <div class="expert-modal-box">
+                <div class="expert-modal-header">
+                    <span id="expert-modal-title" class="font-semibold text-gray-800 text-sm">Add Expert</span>
+                    <button onclick="closeExpertModal()" class="settings-close-btn">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div class="expert-modal-body">
+                    <input type="hidden" id="expert-modal-id">
+                    <label class="expert-modal-label">Name</label>
+                    <input type="text" id="expert-modal-name" class="expert-modal-input" placeholder="e.g. Ana García" maxlength="60"
+                        onkeydown="if(event.key==='Enter') saveExpertModal()">
+                    <p id="expert-modal-error" class="expert-modal-error hidden"></p>
+                </div>
+                <div class="expert-modal-footer">
+                    <button onclick="closeExpertModal()" class="btn-secondary">Cancel</button>
+                    <button onclick="saveExpertModal()" class="btn-primary">Save</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Upload Panel -->
         <section id="upload-panel" class="upload-panel mb-6">
             <div class="upload-panel-header">

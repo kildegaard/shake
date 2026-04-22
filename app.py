@@ -26,7 +26,46 @@ app = Flask(__name__)
 
 ENV_PATH = os.path.join(os.path.dirname(__file__), ".env")
 STORE_PATH = os.path.join(os.path.dirname(__file__), "store_data.json")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+EXPERTS_PATH = os.path.join(DATA_DIR, "experts.json")
 _API_KEY_NAMES = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_AI_API_KEY"]
+
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# ─── Expert profiles ──────────────────────────────────────────────────────────
+
+experts_meta = {
+    "experts": [],          # list[{id, name, created_at}]
+    "active_expert_id": None,
+}
+
+
+def _expert_store_path(expert_id: str) -> str:
+    return os.path.join(DATA_DIR, f"expert_{expert_id}.json")
+
+
+def load_experts():
+    if not os.path.exists(EXPERTS_PATH):
+        return
+    try:
+        with open(EXPERTS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        experts_meta["experts"] = data.get("experts", [])
+        experts_meta["active_expert_id"] = data.get("active_expert_id")
+    except Exception as e:
+        print(f"[experts] Warning: could not load experts — {e}")
+
+
+def save_experts():
+    try:
+        with open(EXPERTS_PATH, "w", encoding="utf-8") as f:
+            json.dump(experts_meta, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[experts] Warning: could not save experts — {e}")
+
+
+def _active_expert_id() -> str | None:
+    return experts_meta.get("active_expert_id")
 
 
 def _read_env_file() -> dict:
@@ -81,8 +120,8 @@ def _next_run_id(run_list: list) -> int:
     return max(r["run_id"] for r in run_list) + 1
 
 
-def save_store():
-    data = {
+def _store_snapshot() -> dict:
+    return {
         "prompt_text": store["prompt_text"],
         "context_files": store["context_files"],
         "rubric_text": store["rubric_text"],
@@ -92,30 +131,58 @@ def save_store():
         "rubric_runs": store["rubric_runs"],
         "rhea_runs": store["rhea_runs"],
     }
+
+
+def save_store():
+    data = _store_snapshot()
+    expert_id = _active_expert_id()
+    path = _expert_store_path(expert_id) if expert_id else STORE_PATH
     try:
-        with open(STORE_PATH, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[store] Warning: could not save store — {e}")
 
 
+def _reset_store():
+    store["prompt_text"] = ""
+    store["context_files"] = []
+    store["rubric_text"] = ""
+    store["analysis_models"] = dict(DEFAULT_MODELS)
+    store["llm_runs"] = {}
+    store["prompt_runs"] = []
+    store["rubric_runs"] = []
+    store["rhea_runs"] = []
+
+
+def _apply_store_data(data: dict):
+    store["prompt_text"] = data.get("prompt_text", "")
+    store["context_files"] = data.get("context_files", [])
+    store["rubric_text"] = data.get("rubric_text", "")
+    stored_models = data.get("analysis_models", {})
+    store["analysis_models"] = dict(DEFAULT_MODELS)
+    for k, v in stored_models.items():
+        if k in DEFAULT_MODELS and v in AVAILABLE_MODELS:
+            store["analysis_models"][k] = v
+    store["llm_runs"] = data.get("llm_runs", {})
+    store["prompt_runs"] = data.get("prompt_runs", [])
+    store["rubric_runs"] = data.get("rubric_runs", [])
+    store["rhea_runs"] = data.get("rhea_runs", [])
+
+
 def load_store():
-    if not os.path.exists(STORE_PATH):
-        return
+    expert_id = _active_expert_id()
+    path = _expert_store_path(expert_id) if expert_id else STORE_PATH
+    if not os.path.exists(path):
+        # Fall back to legacy store_data.json if expert file doesn't exist yet
+        if expert_id and os.path.exists(STORE_PATH):
+            path = STORE_PATH
+        else:
+            return
     try:
-        with open(STORE_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        store["prompt_text"] = data.get("prompt_text", "")
-        store["context_files"] = data.get("context_files", [])
-        store["rubric_text"] = data.get("rubric_text", "")
-        stored_models = data.get("analysis_models", {})
-        for k, v in stored_models.items():
-            if k in DEFAULT_MODELS and v in AVAILABLE_MODELS:
-                store["analysis_models"][k] = v
-        store["llm_runs"] = data.get("llm_runs", {})
-        store["prompt_runs"] = data.get("prompt_runs", [])
-        store["rubric_runs"] = data.get("rubric_runs", [])
-        store["rhea_runs"] = data.get("rhea_runs", [])
+        _apply_store_data(data)
     except Exception as e:
         print(f"[store] Warning: could not load store — {e}")
 
@@ -136,9 +203,12 @@ def _status_payload():
         "prompt_runs": store["prompt_runs"],
         "rubric_runs": store["rubric_runs"],
         "rhea_runs": store["rhea_runs"],
+        "experts": experts_meta["experts"],
+        "active_expert_id": experts_meta["active_expert_id"],
     }
 
 
+load_experts()
 load_store()
 
 
@@ -579,6 +649,115 @@ def clear_context_file(filename):
     store["context_files"] = [f for f in store["context_files"] if f["name"] != filename]
     save_store()
     return jsonify(_status_payload())
+
+
+# ─── Expert Profiles Routes ───────────────────────────────────────────────────
+
+
+def _experts_payload():
+    return {
+        "experts": experts_meta["experts"],
+        "active_expert_id": experts_meta["active_expert_id"],
+    }
+
+
+@app.route("/api/experts", methods=["GET"])
+def experts_list():
+    return jsonify(_experts_payload())
+
+
+@app.route("/api/experts", methods=["POST"])
+def experts_create():
+    body = request.get_json(force=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+    expert_id = str(uuid.uuid4())
+    expert = {
+        "id": expert_id,
+        "name": name,
+        "created_at": datetime.now().isoformat(),
+    }
+    experts_meta["experts"].append(expert)
+    save_experts()
+    return jsonify(expert), 201
+
+
+@app.route("/api/experts/<expert_id>", methods=["PUT"])
+def experts_update(expert_id):
+    body = request.get_json(force=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+    expert = next((e for e in experts_meta["experts"] if e["id"] == expert_id), None)
+    if not expert:
+        return jsonify({"error": "Expert not found"}), 404
+    expert["name"] = name
+    save_experts()
+    return jsonify(expert)
+
+
+@app.route("/api/experts/<expert_id>", methods=["DELETE"])
+def experts_delete(expert_id):
+    expert = next((e for e in experts_meta["experts"] if e["id"] == expert_id), None)
+    if not expert:
+        return jsonify({"error": "Expert not found"}), 404
+    experts_meta["experts"] = [e for e in experts_meta["experts"] if e["id"] != expert_id]
+    # Remove expert data file if it exists
+    ep = _expert_store_path(expert_id)
+    if os.path.exists(ep):
+        try:
+            os.remove(ep)
+        except Exception:
+            pass
+    # If deleted expert was active, switch to another or clear
+    if experts_meta["active_expert_id"] == expert_id:
+        if experts_meta["experts"]:
+            new_active = experts_meta["experts"][0]["id"]
+            experts_meta["active_expert_id"] = new_active
+            save_experts()
+            _reset_store()
+            _load_expert_store(new_active)
+        else:
+            experts_meta["active_expert_id"] = None
+            save_experts()
+            _reset_store()
+    else:
+        save_experts()
+    return jsonify(_experts_payload())
+
+
+@app.route("/api/experts/<expert_id>/select", methods=["POST"])
+def experts_select(expert_id):
+    expert = next((e for e in experts_meta["experts"] if e["id"] == expert_id), None)
+    if not expert:
+        return jsonify({"error": "Expert not found"}), 404
+    # Save current expert's data before switching
+    current_id = experts_meta["active_expert_id"]
+    if current_id:
+        save_store()
+    # Switch active expert
+    experts_meta["active_expert_id"] = expert_id
+    save_experts()
+    # Load new expert's data
+    _reset_store()
+    _load_expert_store(expert_id)
+    payload = _status_payload()
+    payload["experts"] = experts_meta["experts"]
+    payload["active_expert_id"] = expert_id
+    return jsonify(payload)
+
+
+def _load_expert_store(expert_id: str):
+    path = _expert_store_path(expert_id)
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _apply_store_data(data)
+    except Exception as e:
+        print(f"[experts] Warning: could not load expert store — {e}")
 
 
 # ─── System Prompts Routes ────────────────────────────────────────────────────

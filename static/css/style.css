@@ -1752,3 +1752,229 @@
     background: #fafafa;
     flex-shrink: 0;
 }
+
+/* ─── Expert Profiles Bar ──────────────────────────────────────────────────── */
+
+.expert-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    padding: 10px 16px;
+    gap: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+.expert-bar-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+}
+
+.expert-bar-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #6b7280;
+    white-space: nowrap;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.expert-chips {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.expert-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px 4px 10px;
+    border-radius: 20px;
+    border: 1.5px solid #e5e7eb;
+    background: #f9fafb;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: #374151;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.expert-chip:hover {
+    border-color: #93a4fd;
+    background: #f0f4ff;
+    color: #3b5bdb;
+}
+
+.expert-chip.active {
+    border-color: #4263eb;
+    background: #e8edff;
+    color: #3b5bdb;
+    font-weight: 600;
+}
+
+.expert-chip-avatar {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #c5d0fa;
+    color: #3b5bdb;
+    font-size: 0.625rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    text-transform: uppercase;
+}
+
+.expert-chip.active .expert-chip-avatar {
+    background: #4263eb;
+    color: #fff;
+}
+
+.expert-chip-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    margin-left: 2px;
+}
+
+.expert-chip-action-btn {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #9ca3af;
+    padding: 0;
+    transition: color 0.12s, background 0.12s;
+}
+
+.expert-chip-action-btn:hover {
+    color: #374151;
+    background: rgba(0,0,0,0.07);
+}
+
+.expert-chip-action-btn.danger:hover {
+    color: #dc2626;
+    background: #fee2e2;
+}
+
+.expert-add-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 8px;
+    border: 1.5px dashed #c9d3fc;
+    background: transparent;
+    color: #4263eb;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.expert-add-btn:hover {
+    border-color: #4263eb;
+    background: #f0f4ff;
+}
+
+.expert-no-selection {
+    font-size: 0.8rem;
+    color: #9ca3af;
+    font-style: italic;
+}
+
+/* ─── Expert Modal ─────────────────────────────────────────────────────────── */
+
+.expert-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(2px);
+}
+
+.expert-modal-box {
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.18);
+    width: 360px;
+    max-width: 95vw;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.expert-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.expert-modal-body {
+    padding: 18px 18px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.expert-modal-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #374151;
+    letter-spacing: 0.02em;
+}
+
+.expert-modal-input {
+    width: 100%;
+    border: 1.5px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.875rem;
+    color: #111827;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    box-sizing: border-box;
+}
+
+.expert-modal-input:focus {
+    border-color: #4263eb;
+    box-shadow: 0 0 0 3px rgba(66,99,235,0.12);
+}
+
+.expert-modal-error {
+    font-size: 0.775rem;
+    color: #dc2626;
+    margin-top: 2px;
+}
+
+.expert-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 18px;
+    border-top: 1px solid #f3f4f6;
+    background: #fafafa;
+}

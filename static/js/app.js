@@ -398,6 +398,8 @@ async function fetchStatus() {
         const res = await fetch('/api/status');
         const data = await res.json();
         updateStatus(data);
+        // Render expert bar
+        renderExpertBar(data.experts || [], data.active_expert_id || null);
         // Restore persisted runs
         if (data.llm_runs) {
             appState.llmRuns = data.llm_runs;
@@ -2169,5 +2171,197 @@ function _updateHeaderKeyIndicator(data) {
     if (allSet)       { dot.classList.add('settings-keys-ok');      dot.title = 'All API keys configured'; }
     else if (someSet) { dot.classList.add('settings-keys-partial'); dot.title = 'Some API keys missing'; }
     else              { dot.classList.add('settings-keys-missing'); dot.title = 'API keys not configured'; }
+}
+
+// ─── Expert Profiles ─────────────────────────────────────────────────────────
+
+let _expertModalMode = 'add'; // 'add' | 'edit'
+
+function renderExpertBar(experts, activeId) {
+    const container = document.getElementById('expert-chips');
+    if (!container) return;
+
+    if (!experts || experts.length === 0) {
+        container.innerHTML = `<span class="expert-no-selection">No experts yet — add one to start</span>`;
+        return;
+    }
+
+    container.innerHTML = experts.map(e => {
+        const initials = e.name.trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+        const isActive = e.id === activeId;
+        return `
+        <div class="expert-chip ${isActive ? 'active' : ''}" onclick="selectExpert('${e.id}')" title="Switch to ${escapeHtml(e.name)}">
+            <div class="expert-chip-avatar">${escapeHtml(initials)}</div>
+            <span>${escapeHtml(e.name)}</span>
+            <div class="expert-chip-actions" onclick="event.stopPropagation()">
+                <button class="expert-chip-action-btn" onclick="openEditExpertModal('${e.id}', ${JSON.stringify(e.name)})" title="Rename">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+                <button class="expert-chip-action-btn danger" onclick="deleteExpert('${e.id}', ${JSON.stringify(e.name)})" title="Delete">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function openAddExpertModal() {
+    _expertModalMode = 'add';
+    document.getElementById('expert-modal-title').textContent = 'Add Expert';
+    document.getElementById('expert-modal-id').value = '';
+    document.getElementById('expert-modal-name').value = '';
+    document.getElementById('expert-modal-error').textContent = '';
+    document.getElementById('expert-modal-error').classList.add('hidden');
+    document.getElementById('expert-modal').style.display = 'flex';
+    setTimeout(() => document.getElementById('expert-modal-name').focus(), 50);
+}
+
+function openEditExpertModal(id, name) {
+    _expertModalMode = 'edit';
+    document.getElementById('expert-modal-title').textContent = 'Rename Expert';
+    document.getElementById('expert-modal-id').value = id;
+    document.getElementById('expert-modal-name').value = name;
+    document.getElementById('expert-modal-error').textContent = '';
+    document.getElementById('expert-modal-error').classList.add('hidden');
+    document.getElementById('expert-modal').style.display = 'flex';
+    setTimeout(() => {
+        const inp = document.getElementById('expert-modal-name');
+        inp.focus();
+        inp.select();
+    }, 50);
+}
+
+function closeExpertModal() {
+    document.getElementById('expert-modal').style.display = 'none';
+}
+
+function expertModalBackdropClick(event) {
+    if (event.target === document.getElementById('expert-modal')) {
+        closeExpertModal();
+    }
+}
+
+async function saveExpertModal() {
+    const name = document.getElementById('expert-modal-name').value.trim();
+    const errorEl = document.getElementById('expert-modal-error');
+    if (!name) {
+        errorEl.textContent = 'Name is required.';
+        errorEl.classList.remove('hidden');
+        return;
+    }
+    errorEl.classList.add('hidden');
+
+    try {
+        if (_expertModalMode === 'add') {
+            const res = await fetch('/api/experts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                errorEl.textContent = data.error || 'Failed to create expert.';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            closeExpertModal();
+            showToast(`Expert "${name}" created.`, 'success');
+            // Auto-select newly created expert
+            await selectExpert(data.id);
+        } else {
+            const id = document.getElementById('expert-modal-id').value;
+            const res = await fetch(`/api/experts/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                errorEl.textContent = data.error || 'Failed to rename expert.';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            closeExpertModal();
+            showToast(`Renamed to "${name}".`, 'success');
+            // Re-render bar (no data switch, just rename)
+            const statusRes = await fetch('/api/experts');
+            const statusData = await statusRes.json();
+            renderExpertBar(statusData.experts, statusData.active_expert_id);
+        }
+    } catch (e) {
+        errorEl.textContent = 'Network error: ' + e.message;
+        errorEl.classList.remove('hidden');
+    }
+}
+
+async function selectExpert(id) {
+    try {
+        showLoading('Switching expert profile…', 'Loading saved data');
+        const res = await fetch(`/api/experts/${id}/select`, { method: 'POST' });
+        const data = await res.json();
+        hideLoading();
+        if (!res.ok) {
+            showToast(data.error || 'Failed to switch expert.', 'error');
+            return;
+        }
+        // Reset all active run selections
+        appState.activeLLMModel = null;
+        appState.activeLLMRun = {};
+        appState.activePromptRun = null;
+        appState.activeRubricRun = null;
+        appState.activeRheaRun = null;
+        // Apply full status (includes expert data)
+        updateStatus(data);
+        renderExpertBar(data.experts, data.active_expert_id);
+        // Restore runs
+        appState.llmRuns = data.llm_runs || {};
+        const firstKey = MODEL_ORDER.find(k => (appState.llmRuns[k] || []).length > 0);
+        if (firstKey) {
+            appState.activeLLMModel = firstKey;
+            const runs = appState.llmRuns[firstKey];
+            appState.activeLLMRun[firstKey] = runs[runs.length - 1].run_id;
+        }
+        renderAllLLMTabs();
+        updateRheaModelSelect();
+        appState.promptRuns = data.prompt_runs || [];
+        if (appState.promptRuns.length > 0) {
+            appState.activePromptRun = appState.promptRuns[appState.promptRuns.length - 1].run_id;
+        }
+        renderPromptRunTabs();
+        appState.rubricRuns = data.rubric_runs || [];
+        if (appState.rubricRuns.length > 0) {
+            appState.activeRubricRun = appState.rubricRuns[appState.rubricRuns.length - 1].run_id;
+        }
+        renderRubricRunTabs();
+        appState.rheaRuns = data.rhea_runs || [];
+        if (appState.rheaRuns.length > 0) {
+            appState.activeRheaRun = appState.rheaRuns[appState.rheaRuns.length - 1].run_id;
+        }
+        renderRheaRunTabs();
+        showToast(`Switched to "${data.experts?.find(e => e.id === id)?.name || 'expert'}".`, 'success');
+    } catch (e) {
+        hideLoading();
+        showToast('Error switching expert: ' + e.message, 'error');
+    }
+}
+
+async function deleteExpert(id, name) {
+    if (!confirm(`Delete expert "${name}"? Their data will be permanently removed.`)) return;
+    try {
+        const res = await fetch(`/api/experts/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) {
+            showToast(data.error || 'Failed to delete expert.', 'error');
+            return;
+        }
+        showToast(`Expert "${name}" deleted.`, 'success');
+        renderExpertBar(data.experts, data.active_expert_id);
+        // If active expert changed, reload store
+        if (data.active_expert_id !== id) {
+            await fetchStatus();
+        }
+    } catch (e) {
+        showToast('Error deleting expert: ' + e.message, 'error');
+    }
 }
 
