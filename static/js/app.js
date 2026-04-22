@@ -1059,6 +1059,7 @@ function renderAllLLMTabs() {
                 <span>Render MD</span>
             </label>
             <button class="btn-download-pdf" id="btn-llm-pdf" onclick="downloadResponsePDF('${activeKey}', ${activeRunId})">⬇ PDF</button>
+            <button class="btn-download-pdf btn-llm-all-pdf" id="btn-llm-all-pdf" onclick="downloadAllLLMPDF()">⬇ All PDF</button>
         </div>` : '';
 
     const bodyClass = isSuccess
@@ -1149,6 +1150,39 @@ async function downloadResponsePDF(modelKey, runId) {
     }
 }
 
+async function downloadAllLLMPDF() {
+    const btn = document.getElementById('btn-llm-all-pdf');
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+
+    try {
+        const res = await fetch('/api/llm/pdf/all', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+        }
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `llm_all_responses_${_dlTimestamp()}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('PDF downloaded!', 'success');
+    } catch (e) {
+        showToast('PDF download failed: ' + e.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '⬇ All PDF'; }
+    }
+}
+
 // ─── Rhea Evaluator ───
 function updateRheaModelSelect() {
     const select = document.getElementById('rhea-model-select');
@@ -1197,6 +1231,8 @@ async function runRhea() {
             result: data,
         });
         appState.activeRheaRun = rheaRunId;
+        activeRheaModelVersions[modelKey] = rheaRunId;
+        activeRheaTab = _rheaModelSlug(modelKey);
         renderRheaRunTabs();
     } catch (e) {
         showToast('Rhea evaluation failed: ' + e.message, 'error');
@@ -1244,8 +1280,10 @@ async function runRheaAll() {
                     result: data,
                 });
                 appState.activeRheaRun = rheaRunId;
+                activeRheaModelVersions[modelKey] = rheaRunId;
             }
         }
+        activeRheaTab = 'summary';
         renderRheaRunTabs();
     } catch (e) {
         showToast('Rhea evaluation failed: ' + e.message, 'error');
@@ -1256,6 +1294,24 @@ async function runRheaAll() {
 
 // ── Active inner tab for Rhea results ──
 let activeRheaTab = 'summary';
+// Tracks which run_id is selected per model_key when a model has multiple runs
+let activeRheaModelVersions = {};
+
+// Returns a safe HTML-id-friendly key from model_key
+function _rheaModelSlug(modelKey) {
+    return String(modelKey).replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+// Groups appState.rheaRuns by model_key, preserving insertion order
+function _groupRheaRunsByModel() {
+    const map = {};
+    for (const run of appState.rheaRuns) {
+        const key = run.model_key;
+        if (!map[key]) map[key] = [];
+        map[key].push(run);
+    }
+    return map;
+}
 
 function renderRheaRunTabs() {
     const container = document.getElementById('rhea-results');
@@ -1267,26 +1323,47 @@ function renderRheaRunTabs() {
         return;
     }
 
-    // Build inner tab bar
+    const runsByModel = _groupRheaRunsByModel();
+
+    // Ensure activeRheaModelVersions points to a valid run for each model
+    for (const [key, runs] of Object.entries(runsByModel)) {
+        const cur = activeRheaModelVersions[key];
+        if (!cur || !runs.find(r => r.run_id === cur)) {
+            // Default to the latest run
+            activeRheaModelVersions[key] = runs[runs.length - 1].run_id;
+        }
+    }
+
+    // Validate activeRheaTab still refers to an existing model slug
+    if (activeRheaTab !== 'summary') {
+        const slugExists = Object.keys(runsByModel).some(k => _rheaModelSlug(k) === activeRheaTab || k === activeRheaTab);
+        if (!slugExists) activeRheaTab = 'summary';
+    }
+
+    // Build inner tab bar: Summary + one tab per unique model
     let tabBar = '<div class="rhea-inner-tabbar" id="rhea-inner-tabbar">';
     tabBar += `<button class="rhea-inner-tab ${activeRheaTab === 'summary' ? 'rhea-inner-tab-active' : ''}" onclick="switchRheaInnerTab('summary')">Summary</button>`;
-    for (const run of appState.rheaRuns) {
-        const label = escapeHtml(run.result?.model_name || run.model_name || run.model_key);
-        const isActive = activeRheaTab === run.run_id;
-        tabBar += `<button class="rhea-inner-tab ${isActive ? 'rhea-inner-tab-active' : ''}" onclick="switchRheaInnerTab('${run.run_id}')">${label}</button>`;
+    for (const [modelKey, runs] of Object.entries(runsByModel)) {
+        const latestRun = runs[runs.length - 1];
+        const label = escapeHtml(latestRun.result?.model_name || latestRun.model_name || modelKey);
+        const slug = _rheaModelSlug(modelKey);
+        const isActive = activeRheaTab === slug || activeRheaTab === modelKey;
+        tabBar += `<button class="rhea-inner-tab ${isActive ? 'rhea-inner-tab-active' : ''}" onclick="switchRheaInnerTab('${slug}')" data-model-key="${escapeHtml(modelKey)}">${label}</button>`;
     }
     tabBar += '</div>';
 
-    // Build panels
+    // Build summary panel — uses only the latest run per model
     let summaryPanel = `<div class="rhea-inner-panel ${activeRheaTab === 'summary' ? '' : 'hidden'}" id="rhea-panel-summary">`;
-    summaryPanel += renderRheaSummarySection();
+    summaryPanel += renderRheaSummarySection(runsByModel);
     summaryPanel += '</div>';
 
+    // Build one panel per model (with optional version sub-tabs)
     let modelPanels = '';
-    for (const run of appState.rheaRuns) {
-        const isActive = activeRheaTab === run.run_id;
-        modelPanels += `<div class="rhea-inner-panel ${isActive ? '' : 'hidden'}" id="rhea-panel-${run.run_id}">`;
-        modelPanels += _buildRheaDetailHtml(run);
+    for (const [modelKey, runs] of Object.entries(runsByModel)) {
+        const slug = _rheaModelSlug(modelKey);
+        const isActive = activeRheaTab === slug || activeRheaTab === modelKey;
+        modelPanels += `<div class="rhea-inner-panel ${isActive ? '' : 'hidden'}" id="rhea-panel-${slug}">`;
+        modelPanels += _buildRheaModelPanel(modelKey, runs);
         modelPanels += '</div>';
     }
 
@@ -1296,18 +1373,70 @@ function renderRheaRunTabs() {
     if (pdfBtn) pdfBtn.classList.remove('hidden');
 }
 
-function switchRheaInnerTab(tabId) {
-    activeRheaTab = tabId;
-    // Toggle panels
+function switchRheaInnerTab(slugOrKey) {
+    // Accept both slug form and raw model key
+    activeRheaTab = slugOrKey;
     document.querySelectorAll('.rhea-inner-panel').forEach(p => p.classList.add('hidden'));
-    const target = tabId === 'summary' ? document.getElementById('rhea-panel-summary') : document.getElementById(`rhea-panel-${tabId}`);
+    const target = slugOrKey === 'summary'
+        ? document.getElementById('rhea-panel-summary')
+        : document.getElementById(`rhea-panel-${slugOrKey}`);
     if (target) target.classList.remove('hidden');
-    // Toggle tab buttons
     document.querySelectorAll('.rhea-inner-tab').forEach(btn => btn.classList.remove('rhea-inner-tab-active'));
     event?.currentTarget?.classList.add('rhea-inner-tab-active');
 }
 
-function _buildRheaDetailHtml(run) {
+// Builds the content panel for a single model (with version sub-tabs if needed)
+function _buildRheaModelPanel(modelKey, runs) {
+    let html = '';
+
+    if (runs.length > 1) {
+        const activeVersionId = activeRheaModelVersions[modelKey];
+
+        // Version sub-tab bar
+        html += '<div class="rhea-version-tabbar">';
+        for (const run of runs) {
+            const isActive = activeVersionId === run.run_id;
+            html += `<button class="rhea-version-tab ${isActive ? 'rhea-version-tab-active' : ''}" `
+                + `onclick="switchRheaModelVersion('${escapeHtml(modelKey)}', '${run.run_id}', this)">`
+                + `Run ${run.llm_run_id} &nbsp;·&nbsp; ${run.ts || ''}</button>`;
+        }
+        html += '</div>';
+
+        // One content panel per version
+        for (const run of runs) {
+            const isActive = activeVersionId === run.run_id;
+            html += `<div class="rhea-version-panel ${isActive ? '' : 'hidden'}" id="rhea-vp-${run.run_id}">`;
+            html += _buildRheaDetailHtml(run, true);
+            html += '</div>';
+        }
+    } else {
+        html += _buildRheaDetailHtml(runs[0], true);
+    }
+
+    return html;
+}
+
+function switchRheaModelVersion(modelKey, runId, btn) {
+    // run_id is a number in state but arrives as a string from onclick attributes
+    runId = isNaN(+runId) ? runId : +runId;
+    activeRheaModelVersions[modelKey] = runId;
+    const slug = _rheaModelSlug(modelKey);
+    const modelPanel = document.getElementById(`rhea-panel-${slug}`);
+    if (!modelPanel) return;
+
+    modelPanel.querySelectorAll('.rhea-version-panel').forEach(p => p.classList.add('hidden'));
+    const target = document.getElementById(`rhea-vp-${runId}`);
+    if (target) target.classList.remove('hidden');
+
+    modelPanel.querySelectorAll('.rhea-version-tab').forEach(b => b.classList.remove('rhea-version-tab-active'));
+    if (btn) btn.classList.add('rhea-version-tab-active');
+
+    // Keep activeRheaRun in sync for adversarial engine
+    appState.activeRheaRun = runId;
+}
+
+// hideModelName: true when called from model panel (model name is already in the tab label)
+function _buildRheaDetailHtml(run, hideModelName = false) {
     const data = run.result;
     if (!data) return '';
 
@@ -1328,18 +1457,28 @@ function _buildRheaDetailHtml(run) {
     let html = `
         <div class="rhea-detail-block">
             <div class="rhea-detail-block-header">
-                <div class="rhea-detail-block-title">
-                    <span class="font-semibold text-gray-800">${escapeHtml(data.model_name || run.model_name || run.model_key)}</span>
-                    <span class="rhea-detail-block-meta">Run ${run.llm_run_id} &nbsp;·&nbsp; ${run.ts || ''}</span>
+                <div class="rhea-detail-metrics">
+                    <div class="rhea-metric-group">
+                        <span class="rhea-metric-value text-gray-800">${total}</span>
+                        <span class="rhea-metric-label">Criteria</span>
+                    </div>
+                    <div class="rhea-metric-group">
+                        <span class="rhea-metric-value text-green-600">${passed}</span>
+                        <span class="rhea-metric-label">Passed</span>
+                    </div>
+                    <div class="rhea-metric-group">
+                        <span class="rhea-metric-value text-red-600">${failed}</span>
+                        <span class="rhea-metric-label">Failed</span>
+                    </div>
+                    <div class="rhea-metric-divider"></div>
+                    <div class="rhea-metric-group rhea-metric-pts">
+                        <span class="rhea-metric-pts-value">${scored} / ${max} pts</span>
+                        <span class="rhea-metric-label">${max > 0 ? pointsRate + '%' : (summary.pass_rate || 0) + '%'} score</span>
+                    </div>
+                    ${penaltyBadge ? `<div class="rhea-metric-group">${penaltyBadge}</div>` : ''}
                 </div>
-                <div class="rhea-detail-block-stats">
-                    <span class="text-gray-500 text-xs">${total} criteria &nbsp;·&nbsp;
-                        <span class="text-green-600 font-medium">${passed} passed</span> &nbsp;·&nbsp;
-                        <span class="text-red-600 font-medium">${failed} failed</span></span>
-                    &nbsp;
-                    <span class="font-semibold text-gray-700 text-sm">${scored}/${max} pts</span>
-                    <span style="color:${primaryColor}" class="font-bold text-sm">&nbsp;${primaryRate}%</span>
-                    ${penaltyBadge}
+                <div class="rhea-detail-block-actions">
+                    <span style="color:${primaryColor}" class="rhea-metric-score-pill">${primaryRate}%</span>
                     <button class="rhea-detail-delete-btn" onclick="deleteRheaRunById('${run.run_id}')" title="Delete this run">✕</button>
                 </div>
             </div>
@@ -1375,21 +1514,25 @@ function _buildRheaDetailHtml(run) {
     return html;
 }
 
-function renderRheaSummarySection() {
-    const runs = appState.rheaRuns;
-    if (runs.length === 0) return '';
+// runsByModel: { modelKey: [run, ...] } — summary shows latest run per model
+function renderRheaSummarySection(runsByModel) {
+    if (!runsByModel) runsByModel = _groupRheaRunsByModel();
+    if (Object.keys(runsByModel).length === 0) return '';
+
+    // Latest run per model
+    const latestRuns = Object.values(runsByModel).map(runs => runs[runs.length - 1]);
 
     let html = '<div class="rhea-summary-section">';
 
-    if (runs.length > 1) {
+    if (latestRuns.length > 1) {
         html += '<div class="rhea-comparison-header">';
         html += '<h3 class="rhea-comparison-title">Summary — All Models</h3>';
         html += '</div>';
     }
 
-    // Side-by-side summary cards for all runs
+    // Side-by-side summary cards — one per model (latest run)
     html += '<div class="rhea-summary-row">';
-    for (const run of runs) {
+    for (const run of latestRuns) {
         const summary = run.result?.summary || {};
         const total      = summary.total || 0;
         const passed     = summary.passed || 0;
@@ -1439,9 +1582,9 @@ function renderRheaSummarySection() {
     }
     html += '</div>';
 
-    // Comparison table (only when there are multiple runs)
-    if (runs.length > 1) {
-        html += renderRheaComparisonTable(runs);
+    // Comparison table only when there are multiple models
+    if (latestRuns.length > 1) {
+        html += renderRheaComparisonTable(latestRuns);
     }
 
     html += '</div>';
@@ -1506,11 +1649,29 @@ function renderRheaComparisonTable(runs) {
 }
 
 async function deleteRheaRunById(runId) {
+    // run_id is a number in state but arrives as a string from onclick attributes
+    runId = isNaN(+runId) ? runId : +runId;
     try {
         await fetch(`/api/runs/rhea/${runId}`, { method: 'DELETE' });
+        const deleted = appState.rheaRuns.find(r => r.run_id === runId);
         appState.rheaRuns = appState.rheaRuns.filter(r => r.run_id !== runId);
-        // If the deleted tab was active, go back to Summary
-        if (activeRheaTab === runId) activeRheaTab = 'summary';
+
+        if (deleted) {
+            const modelKey = deleted.model_key;
+            const remaining = appState.rheaRuns.filter(r => r.model_key === modelKey);
+            if (remaining.length === 0) {
+                // No more runs for this model — clean up version state and go to Summary
+                delete activeRheaModelVersions[modelKey];
+                const slug = _rheaModelSlug(modelKey);
+                if (activeRheaTab === slug || activeRheaTab === modelKey) {
+                    activeRheaTab = 'summary';
+                }
+            } else if (activeRheaModelVersions[modelKey] === runId) {
+                // Deleted the selected version — fall back to latest
+                activeRheaModelVersions[modelKey] = remaining[remaining.length - 1].run_id;
+            }
+        }
+
         renderRheaRunTabs();
         showToast('Run deleted.', 'success');
     } catch (e) {

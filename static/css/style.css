@@ -672,6 +672,16 @@
     color: #ffffff;
     border-color: #4263eb;
 }
+.btn-llm-all-pdf {
+    color: #0e7490;
+    background: #ecfeff;
+    border-color: #a5f3fc;
+}
+.btn-llm-all-pdf:hover {
+    background: #0e7490;
+    color: #ffffff;
+    border-color: #0e7490;
+}
 
 /* ── Markdown rendered view ── */
 .response-body.markdown-rendered {
@@ -942,36 +952,77 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 16px;
+    padding: 18px 22px;
     background: #f8f9fa;
     border-bottom: 1px solid #e5e7eb;
-    gap: 12px;
+    gap: 16px;
     flex-wrap: wrap;
 }
-.rhea-detail-block-title {
+
+/* Metrics row inside the detail header */
+.rhea-detail-metrics {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    flex-wrap: wrap;
+}
+.rhea-metric-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 52px;
+}
+.rhea-metric-value {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.1;
+}
+.rhea-metric-label {
+    font-size: 0.72rem;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: 2px;
+    font-weight: 500;
+}
+.rhea-metric-divider {
+    width: 1px;
+    height: 44px;
+    background: #e5e7eb;
+    margin: 0 4px;
+}
+.rhea-metric-pts {
+    align-items: flex-start;
+    min-width: 80px;
+}
+.rhea-metric-pts-value {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #1f2937;
+    line-height: 1.15;
+}
+.rhea-metric-score-pill {
+    font-size: 1.5rem;
+    font-weight: 800;
+    line-height: 1;
+}
+
+/* Actions area (score pill + delete) */
+.rhea-detail-block-actions {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-shrink: 0;
 }
-.rhea-detail-block-meta {
-    font-size: 0.75rem;
-    color: #9ca3af;
-}
-.rhea-detail-block-stats {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-}
+
 .rhea-detail-delete-btn {
-    margin-left: 8px;
     font-size: 0.8rem;
     color: #9ca3af;
     background: transparent;
     border: 1px solid #e5e7eb;
     border-radius: 50%;
-    width: 22px;
-    height: 22px;
+    width: 26px;
+    height: 26px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -983,6 +1034,42 @@
     background: #fee2e2;
     color: #dc2626;
     border-color: #fca5a5;
+}
+
+/* ── Rhea Version Sub-tabs (within a model panel) ────────────────────────── */
+.rhea-version-tabbar {
+    display: flex;
+    gap: 4px;
+    padding: 10px 16px 0;
+    background: #f8f9fa;
+    border-bottom: 1px solid #e5e7eb;
+    flex-wrap: wrap;
+}
+.rhea-version-tab {
+    padding: 5px 14px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #6b7280;
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    margin-bottom: -1px;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.rhea-version-tab:hover {
+    color: #4263eb;
+    background: #eef2ff;
+}
+.rhea-version-tab-active {
+    color: #4263eb;
+    background: #fff;
+    border-color: #e5e7eb;
+    font-weight: 600;
+}
+.rhea-version-panel {
+    animation: fadeIn 0.15s ease;
 }
 
 /* Multi-model table column widths */

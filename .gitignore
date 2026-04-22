@@ -22,6 +22,9 @@ env/
 # Uploads (user-uploaded files)
 uploads/
 
+# Persisted session store (user data, not for version control)
+store_data.json
+
 # IDE
 .vscode/
 .idea/
@@ -34,3 +37,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Other files
+Jupiter Shake - Expert Instructions.docx.pdf
+rubric_guidelines (1).pdf

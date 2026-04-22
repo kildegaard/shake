@@ -1,7 +1,7 @@
-import anthropic
 import os
 import json
 import re
+from services.llm_caller import call_llm, DEFAULT_MODELS
 
 SYSTEM_PROMPT = """You are an expert rubric evaluator for the Jupiter Shake crisis management task design project. Your job is to analyze rubrics written by an Expert and evaluate their quality against the official Rubric Design Guidelines.
 
@@ -92,21 +92,13 @@ def _preprocess_rubric_text(raw_text: str) -> str:
     return "\n".join(cleaned)
 
 
-def analyze_rubrics(rubric_text: str, prompt_text: str) -> dict:
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+def analyze_rubrics(rubric_text: str, prompt_text: str, model: str = None) -> dict:
+    model = model or DEFAULT_MODELS["rubric"]
 
     processed_rubrics = _preprocess_rubric_text(rubric_text)
-
     user_message = f"## Prompt (for coverage gap analysis)\n\n{prompt_text}\n\n## Rubrics to Analyze\n\n{processed_rubrics}"
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=16384,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_message}]
-    )
-
-    response_text = response.content[0].text
+    response_text = call_llm(model, SYSTEM_PROMPT, user_message, max_tokens=8192)
 
     try:
         start = response_text.find("{")

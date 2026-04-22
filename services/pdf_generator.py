@@ -9,6 +9,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import (
     HRFlowable,
+    PageBreak,
     Paragraph,
     Preformatted,
     SimpleDocTemplate,
@@ -1067,4 +1068,126 @@ def generate_response_pdf(model_name: str, response_text: str, is_raw: bool = Fa
         canvas.restoreState()
 
     doc.build(elements, onFirstPage=_footer, onLaterPages=_footer)
+    return buffer.getvalue()
+
+
+def generate_all_llm_pdf(runs_data: list) -> bytes:
+    """Generate a single PDF containing all LLM runs, grouped by model.
+
+    runs_data: [
+        {
+            "model_name": str,
+            "model_key": str,
+            "runs": [{"run_id": int, "ts": str, "response": str, "status": str}, ...]
+        },
+        ...
+    ]
+    """
+    buffer = BytesIO()
+    styles = _styles()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=20 * mm,
+        leftMargin=20 * mm,
+        topMargin=22 * mm,
+        bottomMargin=20 * mm,
+        title="Shake Analyzer — LLM Responses",
+        author="Shake Analyzer",
+    )
+
+    model_section_style = ParagraphStyle(
+        "model_section",
+        fontName="Helvetica-Bold",
+        fontSize=16,
+        leading=20,
+        textColor=BRAND,
+        spaceBefore=0,
+        spaceAfter=4,
+    )
+    run_heading_style = ParagraphStyle(
+        "run_heading",
+        fontName="Helvetica-Bold",
+        fontSize=11,
+        leading=15,
+        textColor=GRAY_700,
+        spaceBefore=10,
+        spaceAfter=6,
+    )
+
+    elements: list = []
+
+    # ── Document header ──────────────────────────────────────────────────────
+    date_str = datetime.now().strftime("%B %d, %Y  %H:%M")
+    logo = Paragraph(
+        '<font color="#4263eb" size="22"><b>S</b></font>',
+        ParagraphStyle("logo", fontSize=22, leading=24),
+    )
+    title_para = Paragraph(
+        '<font name="Helvetica-Bold" size="14" color="#111827">Shake Analyzer &#8212; LLM Responses</font>'
+        '<br/><font size="10" color="#374151">All models &#183; all runs</font>',
+        ParagraphStyle("title", fontSize=14, leading=18),
+    )
+    date_para = Paragraph(
+        f'<font size="9" color="#6b7280">{date_str}</font>',
+        ParagraphStyle("date", fontSize=9, leading=13, alignment=TA_LEFT),
+    )
+    page_width = A4[0] - 40 * mm
+    header_tbl = Table(
+        [[logo, title_para, date_para]],
+        colWidths=[12 * mm, page_width - 55 * mm, 43 * mm],
+    )
+    header_tbl.setStyle(TableStyle([
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("LINEBELOW",     (0, 0), (-1, 0), 1.5, BRAND),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
+        ("LEFTPADDING",   (0, 0), (0, 0), 0),
+        ("RIGHTPADDING",  (-1, 0), (-1, 0), 0),
+    ]))
+    elements.append(header_tbl)
+    elements.append(Spacer(1, 8 * mm))
+
+    # ── One section per model ────────────────────────────────────────────────
+    valid_models = [m for m in runs_data if m.get("runs")]
+    for model_idx, model_entry in enumerate(valid_models):
+        model_name = model_entry.get("model_name", model_entry.get("model_key", "Unknown"))
+        runs = model_entry.get("runs", [])
+        successful_runs = [r for r in runs if r.get("status") == "success"]
+
+        # Model title
+        elements.append(Paragraph(_escape_xml(model_name), model_section_style))
+        elements.append(HRFlowable(width="100%", thickness=1.5, color=BRAND, spaceAfter=6))
+
+        if not successful_runs:
+            elements.append(Paragraph("No successful runs for this model.", styles["body"]))
+        else:
+            for run_idx, run in enumerate(successful_runs):
+                run_id = run.get("run_id", run_idx + 1)
+                ts = run.get("ts", "")
+                response = run.get("response", "")
+
+                run_label = f"Run {run_id}" + (f"  \u00b7  {ts}" if ts else "")
+                elements.append(Paragraph(_escape_xml(run_label), run_heading_style))
+                elements.extend(_parse_md_to_elements(response, styles))
+
+                if run_idx < len(successful_runs) - 1:
+                    elements.append(Spacer(1, 4 * mm))
+                    elements.append(HRFlowable(
+                        width="100%", thickness=0.5,
+                        color=GRAY_200, spaceAfter=4,
+                    ))
+
+        if model_idx < len(valid_models) - 1:
+            elements.append(PageBreak())
+
+    def _all_footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(GRAY_500)
+        canvas.drawString(20 * mm, 12 * mm, "Shake Analyzer — Jupiter Shake")
+        canvas.drawRightString(A4[0] - 20 * mm, 12 * mm, f"Page {doc.page}")
+        canvas.restoreState()
+
+    doc.build(elements, onFirstPage=_all_footer, onLaterPages=_all_footer)
     return buffer.getvalue()

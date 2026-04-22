@@ -15,6 +15,7 @@ from services.rhea_evaluator import evaluate_response as _evaluate_response
 from services.llm_caller import AVAILABLE_MODELS, DEFAULT_MODELS
 from services.pdf_generator import (
     generate_response_pdf as _generate_pdf,
+    generate_all_llm_pdf as _generate_all_llm_pdf,
     generate_rhea_pdf as _generate_rhea_pdf,
     generate_prompt_pdf as _generate_prompt_pdf,
     generate_rubric_pdf as _generate_rubric_pdf,
@@ -442,6 +443,49 @@ def download_pdf():
             pdf_bytes,
             mimetype="application/pdf",
             headers={"Content-Disposition": f'attachment; filename="{safe_name}_response.pdf"'},
+        )
+    except Exception as e:
+        return jsonify({"error": f"PDF generation failed: {e}"}), 500
+
+
+@app.route("/api/llm/pdf/all", methods=["POST"])
+def download_all_llm_pdf():
+    """Export every LLM run for every model into one combined PDF, ordered by model."""
+    MODEL_ORDER = ["gpt_54", "gemini_31_pro", "opus_46"]
+
+    runs_data = []
+    for key in MODEL_ORDER:
+        model_runs = store["llm_runs"].get(key, [])
+        if not model_runs:
+            continue
+        model_name = model_runs[-1].get("model", key)
+        runs_data.append({
+            "model_name": model_name,
+            "model_key": key,
+            "runs": model_runs,
+        })
+
+    # Also include any model keys not in MODEL_ORDER (future-proof)
+    ordered_keys = set(MODEL_ORDER)
+    for key, model_runs in store["llm_runs"].items():
+        if key not in ordered_keys and model_runs:
+            model_name = model_runs[-1].get("model", key)
+            runs_data.append({
+                "model_name": model_name,
+                "model_key": key,
+                "runs": model_runs,
+            })
+
+    if not runs_data:
+        return jsonify({"error": "No LLM runs found."}), 404
+
+    try:
+        pdf_bytes = _generate_all_llm_pdf(runs_data)
+        from flask import Response
+        return Response(
+            pdf_bytes,
+            mimetype="application/pdf",
+            headers={"Content-Disposition": 'attachment; filename="llm_all_responses.pdf"'},
         )
     except Exception as e:
         return jsonify({"error": f"PDF generation failed: {e}"}), 500
