@@ -25,6 +25,10 @@ uploads/
 # Persisted session store (user data, not for version control)
 store_data.json
 
+# Local data files (experts, session data - not for version control)
+data/
+!data/system_prompts.json
+
 # IDE
 .vscode/
 .idea/
